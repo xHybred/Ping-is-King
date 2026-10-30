@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 0, 0, 0),
-    prodvers=(1, 0, 0, 0),
+    filevers=(1, 0, 2, 0),
+    prodvers=(1, 0, 2, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -14,11 +14,11 @@ VSVersionInfo(
       StringTable(
         "040904B0",
         [StringStruct("FileDescription", "COD Ping King"),
-         StringStruct("FileVersion", "1.0.0"),
+         StringStruct("FileVersion", "1.0.2"),
          StringStruct("InternalName", "cod-ping-king"),
          StringStruct("OriginalFilename", "CODPingKing.exe"),
          StringStruct("ProductName", "COD Ping King"),
-         StringStruct("ProductVersion", "1.0.0")])
+         StringStruct("ProductVersion", "1.0.2")])
     ]),
     VarFileInfo([VarStruct("Translation", [1033, 1200])])
   ]

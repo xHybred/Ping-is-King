@@ -1,10 +1,10 @@
-﻿<!doctype html>
-<html lang="en">
+<!doctype html>
+<html lang="en" data-theme="midnight">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COD Ping King</title>
-<link rel="stylesheet" href="styles.css?v=1.0.1">
+<link rel="stylesheet" href="styles.css?v=1.0.2">
 </head>
 <body>
 <div id="app">
@@ -40,6 +40,10 @@
         <span>Rules</span>
         <span class="nav-badge" id="rules-badge" hidden>!</span>
       </button>
+      <button class="nav-item" data-screen="diagnostics">
+        <span class="nav-icon" data-icon="diagnostics"></span>
+        <span>Diagnostics</span>
+      </button>
       <button class="nav-item" data-screen="settings">
         <span class="nav-icon" data-icon="settings"></span>
         <span>Settings</span>
@@ -55,7 +59,7 @@
         </div>
       </div>
       <div class="rail-meta">
-        <span id="rail-version">v1.0.0</span>
+        <span id="rail-version">v1.0.2</span>
         <button class="link" id="rail-pause">Pause</button>
       </div>
     </div>
@@ -213,6 +217,7 @@
               <span><i class="legend-dot blocked"></i>Blocked</span>
               <span><i class="legend-ring"></i>Radius</span>
             </div>
+            <div class="map-hint">Drag to pan. Scroll to zoom. Double-click to set home.</div>
           </div>
           <div class="map-controls">
             <div class="home-control">
@@ -331,8 +336,46 @@
     </section>
 
     <!-- Settings -->
+    <section class="screen" id="screen-diagnostics">
+      <div class="settings-grid">
+        <article class="card">
+          <div class="card-head"><div><h2>Application</h2><p>Version and environment.</p></div></div>
+          <dl class="kv compact" id="app-facts"></dl>
+          <p class="fineprint">
+            Filtering works by dropping game packets at the Windows packet layer. It does not modify
+            the game or its memory. Call of Duty's terms give Activision the right to restrict
+            network manipulation, so use this at your own risk.
+          </p>
+          <div class="button-row">
+            <button class="btn btn-small" id="quit-app">Quit app</button>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><h2>Diagnostics</h2><p>Useful when asking for help.</p></div></div>
+          <dl class="kv compact" id="diag-facts"></dl>
+          <div class="button-row">
+            <button class="btn btn-small" id="copy-diag">Copy diagnostics</button>
+            <button class="btn btn-small" id="open-log">Open log folder</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
     <section class="screen" id="screen-settings">
       <div class="settings-grid">
+        <article class="card">
+          <div class="card-head"><div><h2>Appearance</h2><p>Colors for the window and its title bar.</p></div></div>
+          <div class="setting-row">
+            <div><strong>Theme</strong><span>Dark themes also tint the Windows title bar.</span></div>
+            <select id="set-theme">
+              <option value="midnight">Midnight</option>
+              <option value="onyx">Onyx</option>
+              <option value="ember">Ember</option>
+              <option value="light">Light</option>
+            </select>
+          </div>
+        </article>
+
         <article class="card">
           <div class="card-head"><div><h2>Startup</h2><p>How the app behaves when Windows starts.</p></div></div>
           <div class="setting-row">
@@ -365,8 +408,11 @@
         <article class="card">
           <div class="card-head"><div><h2>Filtering behaviour</h2><p>Controls for slow or empty lobbies.</p></div></div>
           <div class="setting-row">
-            <div><strong>Search guard</strong><span>Allow unknown endpoints if no match is found in time.</span></div>
-            <label class="switch"><input type="checkbox" id="set-soft"><span></span></label>
+            <div><strong>Search guard</strong><span>Admit unclassified servers if no match is found in time. Located servers outside your list are never admitted.</span></div>
+            <select id="set-soft">
+              <option value="off">Off</option>
+              <option value="unknown">Allow unclassified servers only</option>
+            </select>
           </div>
           <div class="setting-row">
             <div><strong>Relax after</strong><span>Seconds of searching before the guard lifts.</span></div>
@@ -405,31 +451,12 @@
           <div class="button-row">
             <button class="btn btn-small" id="update-catalog">Update from public lists</button>
             <button class="btn btn-small" id="export-catalog">Export CSV</button>
+            <button class="btn btn-small" id="export-discovered">Export discovered</button>
             <button class="btn btn-small" id="open-folder">Open data folder</button>
             <button class="btn btn-small btn-danger-ghost" id="reset-catalog">Reset catalog</button>
           </div>
         </article>
 
-        <article class="card">
-          <div class="card-head"><div><h2>Application</h2><p>Version and environment.</p></div></div>
-          <dl class="kv compact" id="app-facts"></dl>
-          <p class="fineprint">
-            Filtering works by dropping game packets at the Windows packet layer. It does not modify
-            the game or its memory. Call of Duty's terms give Activision the right to restrict
-            network manipulation, so use this at your own risk.
-          </p>
-          <div class="button-row">
-            <button class="btn btn-small" id="quit-app">Quit app</button>
-          </div>
-        </article>
-        <article class="card">
-          <div class="card-head"><div><h2>Diagnostics</h2><p>Useful when asking for help.</p></div></div>
-          <dl class="kv compact" id="diag-facts"></dl>
-          <div class="button-row">
-            <button class="btn btn-small" id="copy-diag">Copy diagnostics</button>
-            <button class="btn btn-small" id="open-log">Open log folder</button>
-          </div>
-        </article>
       </div>
     </section>
   </main>
@@ -447,7 +474,7 @@
 </div>
 
 <div class="toast-stack" id="toasts" aria-live="polite"></div>
-<script src="world.js?v=1.0.1"></script>
-<script src="app.js?v=1.0.1"></script>
+<script src="world.js?v=1.0.2"></script>
+<script src="app.js?v=1.0.2"></script>
 </body>
 </html>

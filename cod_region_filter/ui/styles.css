@@ -26,28 +26,81 @@
   --radius-lg: 14px;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #0b0d11;
-    --panel: #12151a;
-    --panel-2: #171b21;
-    --rail: #0e1115;
-    --border: #232931;
-    --border-strong: #333b46;
-    --text: #e8edf4;
-    --muted: #97a2b1;
-    --faint: #6c7784;
-    --accent: #5c9dff;
-    --accent-weak: rgba(92, 157, 255, 0.14);
-    --accent-text: #08121f;
-    --ok: #4ec994;
-    --ok-weak: rgba(78, 201, 148, 0.13);
-    --danger: #ef8078;
-    --danger-weak: rgba(239, 128, 120, 0.12);
-    --warn: #e2b25a;
-    --warn-weak: rgba(226, 178, 90, 0.12);
-    --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
-  }
+:root {
+  color-scheme: light;
+}
+
+[data-theme="light"] {
+  color-scheme: light;
+}
+
+[data-theme="midnight"] {
+  color-scheme: dark;
+  --bg: #0b0d11;
+  --panel: #12151a;
+  --panel-2: #171b21;
+  --rail: #0e1115;
+  --border: #232931;
+  --border-strong: #333b46;
+  --text: #e8edf4;
+  --muted: #97a2b1;
+  --faint: #6c7784;
+  --accent: #5c9dff;
+  --accent-weak: rgba(92, 157, 255, 0.14);
+  --accent-text: #08121f;
+  --ok: #4ec994;
+  --ok-weak: rgba(78, 201, 148, 0.13);
+  --danger: #ef8078;
+  --danger-weak: rgba(239, 128, 120, 0.12);
+  --warn: #e2b25a;
+  --warn-weak: rgba(226, 178, 90, 0.12);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+[data-theme="onyx"] {
+  color-scheme: dark;
+  --bg: #0a0a0b;
+  --panel: #121214;
+  --panel-2: #17171a;
+  --rail: #0d0d0f;
+  --border: #26262b;
+  --border-strong: #38383f;
+  --text: #ececee;
+  --muted: #a1a1aa;
+  --faint: #71717a;
+  --accent: #4aae9f;
+  --accent-weak: rgba(74, 174, 159, 0.13);
+  --accent-text: #06211d;
+  --ok: #5ad6a3;
+  --ok-weak: rgba(90, 214, 163, 0.13);
+  --danger: #f07d78;
+  --danger-weak: rgba(240, 125, 120, 0.12);
+  --warn: #e0b45c;
+  --warn-weak: rgba(224, 180, 92, 0.12);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme="ember"] {
+  color-scheme: dark;
+  --bg: #0c0a09;
+  --panel: #141110;
+  --panel-2: #1a1614;
+  --rail: #0e0c0b;
+  --border: #29221e;
+  --border-strong: #3b312b;
+  --text: #f1eae3;
+  --muted: #a89a90;
+  --faint: #756961;
+  --accent: #c07a4e;
+  --accent-weak: rgba(192, 122, 78, 0.15);
+  --accent-text: #180f08;
+  --ok: #8fce8f;
+  --ok-weak: rgba(143, 206, 143, 0.13);
+  --danger: #ee8079;
+  --danger-weak: rgba(238, 128, 121, 0.12);
+  --warn: #e2b25a;
+  --warn-weak: rgba(226, 178, 90, 0.12);
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
 }
 
 * { box-sizing: border-box; }
@@ -480,6 +533,10 @@ a { color: var(--accent); }
 
 .map-legend { position: absolute; left: 10px; bottom: 10px; display: flex; gap: 12px; font-size: 11px; color: var(--muted); background: color-mix(in srgb, var(--panel) 82%, transparent); padding: 4px 8px; border-radius: 6px; }
 .map-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.map-ocean { fill: color-mix(in srgb, var(--accent) 4%, transparent); }
+.map-hint { position: absolute; top: 10px; left: 10px; font-size: 10.5px; color: var(--muted); background: color-mix(in srgb, var(--panel) 78%, transparent); padding: 3px 7px; border-radius: 5px; pointer-events: none; }
+#map { cursor: grab; touch-action: none; }
+#map.is-dragging { cursor: grabbing; }
 .legend-dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
 .legend-dot.allowed { background: var(--ok); }
 .legend-dot.blocked { background: var(--danger); }

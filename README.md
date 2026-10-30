@@ -36,8 +36,9 @@ and searches again.
 
 Matchmaking has its own idea of where you should play, and this does not change
 how the game rates you. It only limits which servers are reachable. If the
-closest servers have nobody in your bracket, the search guard will eventually
-relax the filter rather than leave you searching forever.
+closest servers have nobody in your bracket, the search guard can admit
+unclassified servers after a delay instead of leaving you searching forever. It
+is set in the search guard dropdown and can be turned off.
 
 ## Requirements
 
@@ -50,7 +51,7 @@ relax the filter rather than leave you searching forever.
 
 ## Install
 
-1. Download `COD-Ping-King-1.0.0.exe` from the releases page.
+1. Download `COD-Ping-King-1.0.2.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
@@ -104,9 +105,9 @@ the deny list. The same button turns into **Unblock**.
 ### Regions
 
 The map shows catalogued servers as dots: green for allowed, red for blocked.
-Click the map to move your home. The list on the right is grouped by country and
-shows the observed ping for each region. The slider sets a radius in kilometres;
-everything inside is allowed.
+Drag to pan, scroll to zoom, and double-click to move your home. The list on the
+right is grouped by country and shows the observed ping for each region. The
+slider sets a radius in kilometres; everything inside is allowed.
 
 <img src="docs/screenshots/regions.jpg" alt="Regions screen" width="100%">
 
@@ -132,11 +133,18 @@ imported under Settings.
 
 ### Settings
 
-Startup, window behaviour, streamer mode, filtering behaviour, rules backup,
-catalog refresh, diagnostics and the quit button. **Minimize to tray** is on by
-default; turn it off if you want the close button to exit.
+Startup, window behaviour, streamer mode, filtering behaviour, rules backup and
+catalog refresh. **Minimize to tray** is on by default; turn it off if you want
+the close button to exit.
 
 <img src="docs/screenshots/settings.jpg" alt="Settings screen" width="100%">
+
+### Diagnostics
+
+Application facts, the watched UDP ports, service pins, packet counts and the log
+folder. Use **Copy diagnostics** when reporting a problem.
+
+<img src="docs/screenshots/diagnostics.jpg" alt="Diagnostics screen" width="100%">
 
 ## How a packet is decided
 
@@ -294,7 +302,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-1.0.0.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-1.0.2.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 

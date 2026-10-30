@@ -473,6 +473,17 @@ class Catalog:
             )
             self._conn.commit()
 
+    def discovered_ranges(self) -> list[dict]:
+        """Ranges this install has actually seen traffic from, bundled or not."""
+        self.flush()
+        rows = self._conn.execute(
+            "SELECT cidr, city, region, region_code, country, country_code, lat, lon, "
+            "source, packets, bytes, rtt_ms, first_seen, last_seen FROM ranges "
+            "WHERE is_service = 0 AND packets > 0 "
+            "ORDER BY last_seen DESC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def matches(self, limit: int = 20) -> list[dict]:
         rows = self._conn.execute(
             "SELECT * FROM matches ORDER BY id DESC LIMIT ?", (limit,)

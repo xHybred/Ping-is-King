@@ -75,6 +75,28 @@ def test_export_policy_writes_yaml_and_respects_streamer(state, tmp_path, monkey
     assert "streamer" in blocked["error"].lower()
 
 
+def test_export_discovered_only_includes_observed(state, tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    (tmp_path / "Documents").mkdir()
+    state.catalog.observe("45.63.9.9", 1200, 30.0)
+    state.catalog.flush()
+
+    exported = state.export_discovered()
+    assert exported["ok"] is True
+    payload = json.loads(Path(exported["path"]).read_text(encoding="utf-8"))
+    assert payload["format"] == "cod-ping-king-discovered"
+    assert payload["count"] == len(payload["ranges"]) == 1
+    assert payload["ranges"][0]["cidr"] == "45.63.9.0/24"
+
+    state.set_setting("streamer_mode", True)
+    blocked = state.export_discovered()
+    assert blocked["ok"] is False
+    assert "streamer" in blocked["error"].lower()
+
+
 def test_service_matches_are_not_listed(state):
     state.catalog.record_match(_match("20.1.2.3", "20.1.2.0/24"))
     assert state.matches_payload() == []
@@ -108,3 +130,11 @@ def test_streamer_mode_hides_identifying_details(state):
     assert visible["policy_text"] != ""
     assert visible["policy_home"]["lat"] == pytest.approx(40.6171)
     assert visible["matches"][0]["cidr"] == "45.63.1.0/24"
+
+
+def test_theme_names_accept_legacy_values(state):
+    assert state.set_theme("dark-coffee")["ok"] is True
+    assert state.config["theme"] == "ember"
+    assert state.set_theme("onyx")["ok"] is True
+    assert state.config["theme"] == "onyx"
+    assert state.set_theme("dark")["ok"] is False

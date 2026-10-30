@@ -18,8 +18,8 @@ import webbrowser
 from pathlib import Path
 
 from . import paths
+from .titlebar import TITLE as WINDOW_TITLE, apply as apply_titlebar
 
-WINDOW_TITLE = "COD Ping King"
 MUTEX_NAME = "Local\\CODPingKing.SingleInstance"
 ERROR_ALREADY_EXISTS = 183
 _mutex_handle = None
@@ -196,6 +196,7 @@ def main(argv: list[str] | None = None) -> int:
         return True
 
     def after_start() -> None:
+        apply_titlebar(state.config.get("theme", "midnight"))
         if args.minimized and tray_ctl is not None:
             window.hide()
             tray_ctl.show()
@@ -203,7 +204,7 @@ def main(argv: list[str] | None = None) -> int:
     window.events.closed += on_closed
     window.events.closing += on_closing
     try:
-        webview.start(func=after_start if args.minimized else None, debug=args.debug)
+        webview.start(func=after_start, debug=args.debug)
     finally:
         state.shutdown()
         if tray_ctl is not None:

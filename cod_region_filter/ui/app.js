@@ -5,6 +5,7 @@ const ICONS = {
   map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m9 4.5-5 2v13l5-2 6 2 5-2v-13l-5 2-6-2Z"></path><path d="M9 4.5v13M15 6.5v13"></path></svg>',
   server: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="4" width="17" height="6" rx="1.6"></rect><rect x="3.5" y="14" width="17" height="6" rx="1.6"></rect><path d="M7 7h.01M7 17h.01"></path></svg>',
   rules: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M5 4.5h14v15H5z"></path><path d="M8.5 9h7M8.5 12.5h7M8.5 16h4"></path></svg>',
+  diagnostics: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 18V9M9.3 18V5M14.7 18v-6M20 18v-9"></path><path d="M3 20.5h18"></path></svg>',
   settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="3"></circle><path d="M12 3.5v2M12 18.5v2M3.5 12h2M18.5 12h2M6 6l1.4 1.4M16.6 16.6 18 18M18 6l-1.4 1.4M7.4 16.6 6 18"></path></svg>',
 };
 
@@ -13,6 +14,7 @@ const SCREEN_META = {
   regions: ["Regions", "Choose which parts of the world may host your matches."],
   servers: ["Servers", "Every endpoint the catalog knows about, and its verdict."],
   rules: ["Rules", "The policy file that decides what is allowed."],
+  diagnostics: ["Diagnostics", "What the app sees, and where its files live."],
   settings: ["Settings", "Startup, search guard and local data."],
 };
 
@@ -35,6 +37,7 @@ const state = {
   policyDirty: false,
   lastPolicyText: "",
   currentRegionKey: null,
+  regionPending: {},
   wizardPreview: new URLSearchParams(location.search).has("wizard"),
   busy: false,
 };
@@ -249,6 +252,9 @@ const demo = (() => {
     wizard_done: !new URLSearchParams(location.search).has("wizard"),
     minimize_to_tray: true,
     streamer_mode: false,
+    theme: DEMO_PARAM
+      ? new URLSearchParams(location.search).get("theme") || "midnight"
+      : "midnight",
   };
 
   const demoLocation = { lat: 39.7684, lon: -86.1581, label: "Indianapolis, Indiana (39.77, -86.16)" };
@@ -350,7 +356,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "1.0.0",
+        version: "1.0.2",
         elevated: true,
         driver: true,
         game: { pid: 12844, name: "cod.exe", exe: "C:\\Games\\Call of Duty\\cod.exe" },
@@ -457,6 +463,8 @@ soft_mode:
       return { ok: true, errors: [], warnings: [] };
     },
     set_setting(key, value) { config[key] = value; return { ok: true, config }; },
+    set_theme(name) { config.theme = name; return { ok: true, config }; },
+    export_discovered: () => ({ ok: true, path: "%USERPROFILE%\\Documents\\cod-ping-king-discovered.json", count: 0 }),
     set_soft_mode(enabled, seconds) { policy.soft_mode.enabled = enabled; policy.soft_mode.relax_after_s = seconds; return { ok: true }; },
     set_unknown(mode) { policy.unknown = mode; return { ok: true }; },
     set_filtering(on) { stateObj.filtering = on; config.filtering = on; return { ok: true, config }; },
@@ -517,6 +525,7 @@ function nav(screen) {
   if (screen === "regions") renderMap();
   if (screen === "servers") renderServers();
   if (screen === "rules") loadPolicyEditor();
+  if (screen === "diagnostics") renderSettings();
 }
 
 function setStatus(dotClass, title, sub) {
@@ -659,9 +668,31 @@ function mapView() {
     const home = state.boot && (state.boot.policy_home || demoHome(state.boot));
     state.mapView = home && typeof home.lat === "number"
       ? { span: 130, lat: home.lat, lon: home.lon }
-      : { span: 360, lat: 20, lon: 0 };
+      : { span: 360, lat: 0, lon: 0 };
   }
-  return state.mapView;
+  return clampView(state.mapView);
+}
+
+function clampView(view) {
+  view.span = Math.max(40, Math.min(360, view.span));
+  if (view.span >= 360) {
+    view.span = 360;
+    view.lon = 0;
+    view.lat = 0;
+    return view;
+  }
+  const k = (VIEW_W / MAP_W) * (360 / view.span);
+  // Keep the projected world covering the viewport, so panning never shows
+  // empty space past the map edges.
+  const halfLon = view.span / 2;
+  view.lon = Math.max(-180 + halfLon, Math.min(180 - halfLon, view.lon));
+  const halfWorld = VIEW_H / (2 * k);
+  const minY = halfWorld;
+  const maxY = MAP_H - halfWorld;
+  view.lat = minY >= maxY
+    ? 0
+    : inverseMercatorY(Math.max(minY, Math.min(maxY, mercatorY(view.lat))));
+  return view;
 }
 
 function renderMap() {
@@ -680,6 +711,7 @@ function renderMap() {
   const parts = [];
   parts.push(`<defs><clipPath id="map-clip"><rect x="0" y="0" width="${VIEW_W}" height="${VIEW_H}"></rect></clipPath></defs>`);
   parts.push(`<g clip-path="url(#map-clip)">`);
+  parts.push(`<rect class="map-ocean" x="0" y="0" width="${VIEW_W}" height="${VIEW_H}"></rect>`);
   parts.push(
     `<g transform="translate(${tx.toFixed(2)} ${ty.toFixed(2)}) scale(${k.toFixed(4)})">` +
     `<path class="land" d="${WORLD_LAND_PATH}"></path>` +
@@ -744,22 +776,32 @@ function renderMap() {
   parts.push(`</g>`);
 
   svg.innerHTML = parts.join("");
-  svg.onclick = async (event) => {
-    const pt = svg.createSVGPoint();
-    pt.x = event.clientX;
-    pt.y = event.clientY;
-    const local = pt.matrixTransform(svg.getScreenCTM().inverse());
-    const wx = (local.x - tx) / k;
-    const wy = (local.y - ty) / k;
-    const lon = (wx / MAP_W) * 360 - 180;
-    const lat = inverseMercatorY(wy);
-    if (lat < -60 || lat > 75 || lon < -180 || lon > 180) return;
-    await call("set_home", lat, lon);
-    state.mapView = { span: Math.min(view.span, 130), lat, lon };
-    await refresh();
-    const updated = state.boot && state.boot.policy_home;
-    toast(updated && updated.label ? `Home set to ${updated.label}` : "Home location updated");
+}
+
+function mapPoint(event) {
+  const svg = $("#map");
+  const pt = svg.createSVGPoint();
+  pt.x = event.clientX;
+  pt.y = event.clientY;
+  const local = pt.matrixTransform(svg.getScreenCTM().inverse());
+  const view = mapView();
+  const k = (VIEW_W / MAP_W) * (360 / view.span);
+  const tx = VIEW_W / 2 - ((view.lon + 180) / 360) * MAP_W * k;
+  const ty = VIEW_H / 2 - mercatorY(view.lat) * k;
+  return {
+    lon: (((local.x - tx) / k) / MAP_W) * 360 - 180,
+    lat: inverseMercatorY((local.y - ty) / k),
   };
+}
+
+async function setHomeAt(event) {
+  const { lat, lon } = mapPoint(event);
+  if (lat < -60 || lat > 75 || lon < -180 || lon > 180) return;
+  await call("set_home", lat, lon);
+  state.mapView = { span: Math.min(mapView().span, 130), lat, lon };
+  await refresh();
+  const updated = state.boot && state.boot.policy_home;
+  toast(updated && updated.label ? `Home set to ${updated.label}` : "Home location updated");
 }
 
 function zoomMap(factor, anchor) {
@@ -779,6 +821,7 @@ function zoomMap(factor, anchor) {
     view.lon = lon;
     view.lat = Math.max(-60, Math.min(75, lat));
   }
+  clampView(view);
   renderMap();
 }
 
@@ -845,7 +888,9 @@ function renderRegions() {
     byCountry.get(r.country_code).push(r);
   }
 
-  const isOn = (r) => (blocklist ? r.permitted : r.allowed);
+  const isOn = (r) => (state.regionPending[r.key] !== undefined
+    ? state.regionPending[r.key]
+    : (blocklist ? r.permitted : r.allowed));
 
   const html = [];
   for (const [cc, group] of byCountry) {
@@ -952,12 +997,14 @@ function renderSettings() {
   const boot = state.boot;
   const cfg = boot.config || {};
   const summary = boot.summary || {};
+  $("#set-theme").value = cfg.theme || "midnight";
   $("#set-startup").checked = Boolean(cfg.start_with_windows);
   $("#set-autofilter").checked = Boolean(cfg.filtering);
   $("#set-tray").checked = cfg.minimize_to_tray !== false;
   $("#set-streamer").checked = Boolean(cfg.streamer_mode);
-  $("#set-soft").checked = Boolean(summary.soft && summary.soft.enabled);
+  $("#set-soft").value = summary.soft && summary.soft.enabled ? "unknown" : "off";
   $("#set-soft-seconds").value = (summary.soft && summary.soft.relax_after_s) || 45;
+  $("#set-soft-seconds").disabled = !(summary.soft && summary.soft.enabled);
   $("#set-unknown").value = summary.unknown || "allow";
   $("#set-geo").checked = Boolean(cfg.auto_geolocate);
   $("#show-seed").checked = Boolean(state.showSeed);
@@ -1035,10 +1082,15 @@ function loadPolicyEditor() {
 /* Data flow                                                          */
 /* ------------------------------------------------------------------ */
 
+function applyTheme(name) {
+  document.documentElement.dataset.theme = name || "midnight";
+}
+
 async function refresh() {
   try {
     const boot = await call("bootstrap");
     state.boot = boot;
+    applyTheme(boot.config.theme);
     state.showSeed = Boolean(boot.config.show_seed_clusters);
     renderChrome(boot);
     renderDashboard(boot);
@@ -1134,7 +1186,7 @@ function openWizard(step) {
       title: "Where are you playing from?",
       body: `<p>Your location is used for the radius option and for sorting regions by ping. It is stored only in the local policy file.</p>
         <div class="wizard-home" id="wizard-home">${$("#home-label").textContent}</div>
-        <p class="hint">You can also click the map later to move it.</p>`,
+        <p class="hint">You can also double-click the map later to move it.</p>`,
       next: "Detect location",
       action: "detect",
     },
@@ -1268,17 +1320,33 @@ function bindEvents() {
     const target = event.target;
     const blocklist = (state.boot.summary || {}).mode === "blocklist";
     if (target.dataset.region) {
-      if (blocklist) await call("set_region_blocked", target.dataset.region, !target.checked);
-      else await call("set_regions", [target.dataset.region], target.checked);
-      await refresh();
+      const key = target.dataset.region;
+      const next = target.checked;
+      state.regionPending[key] = next;
+      renderRegions();
+      try {
+        if (blocklist) await call("set_region_blocked", key, !next);
+        else await call("set_regions", [key], next);
+        await refresh();
+      } finally {
+        delete state.regionPending[key];
+        renderRegions();
+      }
     } else if (target.dataset.group) {
       const keys = visibleRegions().filter((r) => r.country_code === target.dataset.group).map((r) => r.key);
-      if (blocklist) {
-        await call("set_regions_blocked", keys, !target.checked);
-      } else {
-        await call("set_regions", keys, target.checked);
+      for (const key of keys) state.regionPending[key] = target.checked;
+      renderRegions();
+      try {
+        if (blocklist) {
+          await call("set_regions_blocked", keys, !target.checked);
+        } else {
+          await call("set_regions", keys, target.checked);
+        }
+        await refresh();
+      } finally {
+        for (const key of keys) delete state.regionPending[key];
+        renderRegions();
       }
-      await refresh();
     }
   });
   $("#region-list").addEventListener("click", (event) => {
@@ -1365,18 +1433,51 @@ function bindEvents() {
   $("#map-zoom-out").addEventListener("click", () => zoomMap(1 / 0.7));
   $("#map-home").addEventListener("click", focusHome);
   $("#map-world").addEventListener("click", () => {
-    state.mapView = { span: 360, lat: 20, lon: 0 };
+    state.mapView = { span: 360, lat: 0, lon: 0 };
     renderMap();
   });
-  $("#map").addEventListener("wheel", (event) => {
+  const mapEl = $("#map");
+  mapEl.addEventListener("wheel", (event) => {
     event.preventDefault();
-    const rect = $("#map").getBoundingClientRect();
+    const rect = mapEl.getBoundingClientRect();
     const anchor = {
       x: ((event.clientX - rect.left) / rect.width) * VIEW_W,
       y: ((event.clientY - rect.top) / rect.height) * VIEW_H,
     };
     zoomMap(event.deltaY > 0 ? 1.25 : 0.8, anchor);
   }, { passive: false });
+
+  let drag = null;
+  mapEl.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    drag = { x: event.clientX, y: event.clientY, lon: mapView().lon, lat: mapView().lat, moved: false };
+    mapEl.setPointerCapture(event.pointerId);
+    mapEl.classList.add("is-dragging");
+  });
+  mapEl.addEventListener("pointermove", (event) => {
+    if (!drag) return;
+    const dx = event.clientX - drag.x;
+    const dy = event.clientY - drag.y;
+    if (!drag.moved && Math.abs(dx) + Math.abs(dy) < 4) return;
+    drag.moved = true;
+    const view = mapView();
+    const k = (VIEW_W / MAP_W) * (360 / view.span);
+    view.lon = drag.lon - (dx / (MAP_W * k)) * 360;
+    view.lat = inverseMercatorY(mercatorY(drag.lat) - dy / k);
+    state.mapView = clampView(view);
+    renderMap();
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    drag = null;
+    mapEl.classList.remove("is-dragging");
+  };
+  mapEl.addEventListener("pointerup", endDrag);
+  mapEl.addEventListener("pointercancel", endDrag);
+  mapEl.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    setHomeAt(event);
+  });
 
   // servers
   $("#server-search").addEventListener("input", (e) => {
@@ -1444,8 +1545,12 @@ function bindEvents() {
     state.mapView = null;
     await mutate(call("set_setting", "streamer_mode", on), on ? "Streamer mode on. Details are hidden." : "Streamer mode off. Details are visible.");
   });
-  $("#set-soft").addEventListener("change", (e) => mutate(call("set_soft_mode", e.target.checked, Number($("#set-soft-seconds").value) || 45), "Search guard saved"));
-  $("#set-soft-seconds").addEventListener("change", (e) => mutate(call("set_soft_mode", $("#set-soft").checked, Number(e.target.value) || 45), "Search guard delay saved"));
+  $("#set-soft").addEventListener("change", (e) => mutate(call("set_soft_mode", e.target.value !== "off", Number($("#set-soft-seconds").value) || 45), "Search guard saved"));
+  $("#set-theme").addEventListener("change", async (e) => {
+    applyTheme(e.target.value);
+    await mutate(call("set_theme", e.target.value), "");
+  });
+  $("#set-soft-seconds").addEventListener("change", (e) => mutate(call("set_soft_mode", $("#set-soft").value !== "off", Number(e.target.value) || 45), "Search guard delay saved"));
   $("#set-unknown").addEventListener("change", (e) => mutate(call("set_unknown", e.target.value), "Unknown endpoint rule saved"));
   $("#update-catalog").addEventListener("click", async () => {
     const result = await call("update_catalog");
@@ -1459,6 +1564,10 @@ function bindEvents() {
   $("#export-catalog").addEventListener("click", async () => {
     const result = await call("export_csv");
     toast(result.ok ? `Exported to ${result.path}` : result.error || "Export failed", result.ok ? "ok" : "bad");
+  });
+  $("#export-discovered").addEventListener("click", async () => {
+    const result = await call("export_discovered");
+    toast(result.ok ? `Exported ${result.count} ranges to ${result.path}` : result.error || "Export failed", result.ok ? "ok" : "bad");
   });
   $("#open-folder").addEventListener("click", () => call("open_folder", "policy"));
   $("#reset-catalog").addEventListener("click", async () => {

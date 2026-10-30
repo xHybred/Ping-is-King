@@ -114,6 +114,9 @@ class Api:
     def set_setting(self, key: str, value) -> dict:
         return self.state.set_setting(key, value)
 
+    def set_theme(self, name: str) -> dict:
+        return self.state.set_theme(name)
+
     def set_soft_mode(self, enabled: bool, seconds: int) -> dict:
         return self.state.set_soft_mode(bool(enabled), int(seconds))
 
@@ -125,6 +128,9 @@ class Api:
 
     def export_csv(self) -> dict:
         return self.state.export_csv()
+
+    def export_discovered(self) -> dict:
+        return self.state.export_discovered()
 
     def export_policy(self) -> dict:
         return self.state.export_policy()

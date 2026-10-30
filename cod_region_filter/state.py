@@ -6,16 +6,16 @@ import json
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
-from . import catalog_update, games, geo, paths, policy as policy_mod, services
+from . import catalog_update, games, geo, paths, policy as policy_mod, services, titlebar
 from .catalog import Catalog, cidr_for
 from .capture import CaptureWorker, available as driver_available
 from .engine import Engine
 from .policy import PolicyEngine, parse as parse_policy, dump as dump_policy
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.2"
 
 DEFAULT_CONFIG = {
     "filtering": True,
@@ -25,6 +25,7 @@ DEFAULT_CONFIG = {
     "wizard_done": False,
     "minimize_to_tray": True,
     "streamer_mode": False,
+    "theme": "midnight",
 }
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -107,6 +108,7 @@ class AppState:
         self.log = log or (lambda *_: None)
         paths.migrate_legacy()
         self.config = _read_json(paths.config_path(), DEFAULT_CONFIG)
+        self.config["theme"] = titlebar.normalise(self.config.get("theme", "midnight"))
         self.catalog = Catalog()
         if self.catalog.is_empty():
             seeded = self.catalog.seed()
@@ -495,6 +497,14 @@ class AppState:
             self._queue_geo()
         return {"ok": True, "config": self.config}
 
+    def set_theme(self, name: str) -> dict:
+        name = titlebar.normalise(name)
+        if name not in titlebar.THEMES:
+            return {"ok": False, "error": f"unknown theme {name}"}
+        result = self.set_setting("theme", name)
+        titlebar.apply(name)
+        return result
+
     def set_soft_mode(self, enabled: bool, seconds: int) -> dict:
         def mutate(p: policy_mod.Policy) -> None:
             p.soft_mode.enabled = bool(enabled)
@@ -656,6 +666,28 @@ class AppState:
         except OSError as exc:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "path": str(path)}
+
+    def export_discovered(self) -> dict:
+        if self.streamer_mode():
+            return {"ok": False, "error": "Turn off streamer mode to export server addresses."}
+        rows = self.catalog.discovered_ranges()
+        docs = Path.home() / "Documents"
+        target_dir = docs if docs.is_dir() else Path.home()
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = target_dir / f"cod-ping-king-discovered-{stamp}.json"
+        payload = {
+            "format": "cod-ping-king-discovered",
+            "version": 1,
+            "app_version": APP_VERSION,
+            "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "count": len(rows),
+            "ranges": rows,
+        }
+        try:
+            target.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "path": str(target), "count": len(rows)}
 
     def export_policy(self) -> dict:
         if self.streamer_mode():
