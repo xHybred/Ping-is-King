@@ -2,7 +2,7 @@
   <img src="docs/brand/banner.png" alt="COD Ping King" width="100%">
 </p>
 
-# COD Ping King
+# PiK Tool
 
 **Ping is King**
 
@@ -11,9 +11,9 @@ there was no setting to tell it otherwise. It is a packet filter for Call of Dut
 on Windows: you choose the regions you are willing to play on, and traffic to
 everything else is dropped.
 
-It is not a VPN. It does not modify the game or read its memory. The app watches
+It's not a VPN, nor does it does it modify the game or read its memory. The app watches
 the game's UDP traffic with WinDivert, works out which server the match is using,
-and drops packets to servers outside your rules. The game sees a dead endpoint
+then drops packets to servers outside your rules. When this happens the game sees a dead endpoint
 and searches again.
 
 <p align="center">
@@ -36,9 +36,8 @@ and searches again.
 
 Matchmaking has its own idea of where you should play, and this does not change
 how the game rates you. It only limits which servers are reachable. If the
-closest servers have nobody in your bracket, the search guard can admit
-unclassified servers after a delay instead of leaving you searching forever. It
-is set in the search guard dropdown and can be turned off.
+closest servers have nobody in your bracket, the search guard will eventually
+relax the filter rather than leave you searching forever (this can be raised or disabled. User choice).
 
 ## Requirements
 
@@ -51,7 +50,7 @@ is set in the search guard dropdown and can be turned off.
 
 ## Install
 
-1. Download `COD-Ping-King-1.0.2.exe` from the releases page.
+1. Download `COD-Ping-King-1.0.0.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
@@ -105,9 +104,9 @@ the deny list. The same button turns into **Unblock**.
 ### Regions
 
 The map shows catalogued servers as dots: green for allowed, red for blocked.
-Drag to pan, scroll to zoom, and double-click to move your home. The list on the
-right is grouped by country and shows the observed ping for each region. The
-slider sets a radius in kilometres; everything inside is allowed.
+Click the map to move your home. The list on the right is grouped by country and
+shows the observed ping for each region. The slider sets a radius in kilometres;
+everything inside is allowed.
 
 <img src="docs/screenshots/regions.jpg" alt="Regions screen" width="100%">
 
@@ -133,18 +132,11 @@ imported under Settings.
 
 ### Settings
 
-Startup, window behaviour, streamer mode, filtering behaviour, rules backup and
-catalog refresh. **Minimize to tray** is on by default; turn it off if you want
-the close button to exit.
+Startup, window behaviour, streamer mode, filtering behaviour, rules backup,
+catalog refresh, diagnostics and the quit button. **Minimize to tray** is on by
+default; turn it off if you want the close button to exit.
 
 <img src="docs/screenshots/settings.jpg" alt="Settings screen" width="100%">
-
-### Diagnostics
-
-Application facts, the watched UDP ports, service pins, packet counts and the log
-folder. Use **Copy diagnostics** when reporting a problem.
-
-<img src="docs/screenshots/diagnostics.jpg" alt="Diagnostics screen" width="100%">
 
 ## How a packet is decided
 
@@ -302,7 +294,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-1.0.2.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-1.0.0.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 
