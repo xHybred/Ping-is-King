@@ -1,0 +1,6 @@
+pydivert>=3.1.2
+pywebview>=5.4
+psutil>=6.0
+PyYAML>=6.0
+requests>=2.31
+pystray>=0.19

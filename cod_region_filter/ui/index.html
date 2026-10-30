@@ -1,0 +1,453 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>COD Ping King</title>
+<link rel="stylesheet" href="styles.css?v=1.0.1">
+</head>
+<body>
+<div id="app">
+  <aside class="rail">
+    <div class="brand">
+      <div class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6">
+          <circle cx="12" cy="12" r="9"></circle>
+          <path d="M7 16.4h10M7.4 9.8l2.9 1.9L12 7.4l1.7 4.3 2.9-1.9v6.6H7.4z" fill="currentColor" stroke="none"></path>
+        </svg>
+      </div>
+      <div class="brand-text">
+        <strong>COD Ping King</strong>
+        <span>Ping is King</span>
+      </div>
+    </div>
+
+    <nav class="nav" aria-label="Sections">
+      <button class="nav-item is-active" data-screen="dashboard">
+        <span class="nav-icon" data-icon="dashboard"></span>
+        <span>Dashboard</span>
+      </button>
+      <button class="nav-item" data-screen="regions">
+        <span class="nav-icon" data-icon="map"></span>
+        <span>Regions</span>
+      </button>
+      <button class="nav-item" data-screen="servers">
+        <span class="nav-icon" data-icon="server"></span>
+        <span>Servers</span>
+      </button>
+      <button class="nav-item" data-screen="rules">
+        <span class="nav-icon" data-icon="rules"></span>
+        <span>Rules</span>
+        <span class="nav-badge" id="rules-badge" hidden>!</span>
+      </button>
+      <button class="nav-item" data-screen="settings">
+        <span class="nav-icon" data-icon="settings"></span>
+        <span>Settings</span>
+      </button>
+    </nav>
+
+    <div class="rail-foot">
+      <div class="rail-status">
+        <span class="dot" id="rail-dot"></span>
+        <div>
+          <strong id="rail-status-text">Starting</strong>
+          <span id="rail-status-sub">Checking driver</span>
+        </div>
+      </div>
+      <div class="rail-meta">
+        <span id="rail-version">v1.0.0</span>
+        <button class="link" id="rail-pause">Pause</button>
+      </div>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="topbar-title">
+        <h1 id="screen-title">Dashboard</h1>
+        <p id="screen-sub">Live view of the server you are connected to.</p>
+      </div>
+      <div class="topbar-actions">
+        <div class="status-pill" id="game-pill" title="Game process detection">
+          <span class="dot"></span><span id="game-pill-text">Game not detected</span>
+        </div>
+        <button class="btn btn-primary" id="filter-toggle">Pause filtering</button>
+      </div>
+    </header>
+
+    <div class="banner banner-warn" id="admin-banner" hidden>
+      <div>
+        <strong>Administrator access is required for filtering.</strong>
+        <span>Without it the app can still catalogue servers but cannot block any.</span>
+      </div>
+      <button class="btn btn-small" id="elevate-btn">Restart as administrator</button>
+    </div>
+
+    <div class="banner banner-info" id="setup-banner" hidden>
+      <div>
+        <strong>Setup is not finished.</strong>
+        <span>No regions are being enforced yet. Choose where you want to play.</span>
+      </div>
+      <button class="btn btn-small" id="setup-btn">Finish setup</button>
+    </div>
+
+    <div class="banner banner-info" id="soft-banner" hidden>
+      <div>
+        <strong>Search guard is active.</strong>
+        <span id="soft-banner-text">No match was found, so unknown endpoints were allowed temporarily.</span>
+      </div>
+      <button class="btn btn-small" id="soft-stop-btn">Turn off search guard</button>
+    </div>
+
+    <div class="banner banner-warn" id="policy-banner" hidden>
+      <div>
+        <strong>Last policy edit was rejected.</strong>
+        <span id="policy-banner-text"></span>
+      </div>
+      <button class="btn btn-small" data-go="rules">Open rules</button>
+    </div>
+
+    <!-- Dashboard -->
+    <section class="screen is-active" id="screen-dashboard">
+      <div class="stat-grid">
+        <article class="card stat">
+          <span class="stat-label">Filtering</span>
+          <div class="stat-value" id="stat-filtering">Off</div>
+          <span class="stat-sub" id="stat-filtering-sub">Not started</span>
+        </article>
+        <article class="card stat">
+          <span class="stat-label">Current server</span>
+          <div class="stat-value" id="stat-server">Searching</div>
+          <span class="stat-sub" id="stat-server-sub">No match in progress</span>
+        </article>
+        <article class="card stat">
+          <span class="stat-label">Ping estimate</span>
+          <div class="stat-value" id="stat-rtt">--</div>
+          <span class="stat-sub">Round-trip, approximate</span>
+        </article>
+        <article class="card stat">
+          <span class="stat-label">Packets dropped</span>
+          <div class="stat-value" id="stat-denied">0</div>
+          <span class="stat-sub" id="stat-denied-sub">0 allowed</span>
+        </article>
+      </div>
+
+      <div class="split split-wide">
+        <article class="card">
+          <div class="card-head">
+            <div>
+              <h2>Match session</h2>
+              <p id="session-note">Waiting for the game to join a match.</p>
+            </div>
+            <span class="tag" id="session-tag">Idle</span>
+          </div>
+          <div class="session-body">
+            <div class="session-loc">
+              <div class="city" id="session-city">No active match</div>
+              <div class="region" id="session-region">Start Call of Duty and enter a lobby or match.</div>
+            </div>
+            <div class="session-metrics">
+              <div><span>Duration</span><strong id="session-duration">--</strong></div>
+              <div><span>Ping</span><strong id="session-rtt">--</strong></div>
+              <div><span>Endpoint</span><strong id="session-ip">--</strong></div>
+            </div>
+          </div>
+          <div class="session-actions">
+            <button class="btn" id="allow-region-btn" disabled>Allow this region</button>
+            <button class="btn btn-danger-ghost" id="deny-region-btn" disabled>Block this region</button>
+            <span class="hint" id="session-reason"></span>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head">
+            <div><h2 id="allowlist-title">Your allowlist</h2><p id="allowlist-sub">Regions that may host your matches.</p></div>
+            <button class="link" data-go="regions">Edit</button>
+          </div>
+          <div class="allowlist-summary" id="allowlist-summary"></div>
+          <p class="fineprint">Authentication, lobby, ownership and content servers are always allowed and never appear in these lists.</p>
+        </article>
+      </div>
+
+      <article class="card">
+        <div class="card-head">
+          <div><h2>Recent matches</h2><p>Last ten completed sessions, including blocked attempts.</p></div>
+          <button class="link" id="export-dash">Export CSV</button>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="matches-table">
+            <thead>
+              <tr>
+                <th>Server</th><th>Region</th><th class="num">Ping</th>
+                <th class="num">Duration</th><th class="num">Data</th><th>Result</th><th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="empty" id="matches-empty">No matches recorded yet.</div>
+      </article>
+    </section>
+
+    <!-- Regions -->
+    <section class="screen" id="screen-regions">
+      <div class="split split-map">
+        <article class="card map-card">
+          <div class="card-head">
+            <div><h2>Server map</h2><p>Each dot is a catalogued server location. Positions are approximate.</p></div>
+            <label class="check small">
+              <input type="checkbox" id="show-seed">
+              <span>Show catalogue seeds</span>
+            </label>
+          </div>
+          <div class="map-shell">
+            <svg id="map" viewBox="0 0 760 420" role="img" aria-label="Map of catalogued server locations"></svg>
+            <div class="map-tools">
+              <button class="map-tool" id="map-zoom-in" title="Zoom in" aria-label="Zoom in">+</button>
+              <button class="map-tool" id="map-zoom-out" title="Zoom out" aria-label="Zoom out">-</button>
+              <button class="map-tool wide" id="map-home" title="Centre on home">Home</button>
+              <button class="map-tool wide" id="map-world" title="Show the whole world">World</button>
+            </div>
+            <div class="map-legend">
+              <span><i class="legend-dot allowed"></i>Allowed</span>
+              <span><i class="legend-dot blocked"></i>Blocked</span>
+              <span><i class="legend-ring"></i>Radius</span>
+            </div>
+          </div>
+          <div class="map-controls">
+            <div class="home-control">
+              <span class="label">Home location</span>
+              <strong id="home-label">Not set</strong>
+              <button class="btn btn-small" id="detect-home">Detect</button>
+              <button class="btn btn-small" id="clear-home">Reset</button>
+            </div>
+            <div class="radius-control">
+              <div class="radius-head">
+                <label for="radius">Radius allowlist</label>
+                <output id="radius-value">Off</output>
+              </div>
+              <input type="range" id="radius" min="0" max="3000" step="50" value="0">
+              <div class="radius-scale"><span>Off</span><span>1500 km</span><span>3000 km</span></div>
+            </div>
+          </div>
+        </article>
+
+        <article class="card region-list-card">
+          <div class="card-head">
+            <div><h2>Regions</h2><p id="region-count">0 locations</p></div>
+            <div class="segmented" id="region-filter">
+              <button class="is-active" data-mode="all">All</button>
+              <button data-mode="observed">Played</button>
+              <button data-mode="allowed">Allowed</button>
+            </div>
+          </div>
+          <div class="field search">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+            <input type="search" id="region-search" placeholder="Search region or country">
+          </div>
+          <div class="region-list" id="region-list"></div>
+          <div class="list-foot">
+            <button class="link" id="select-visible">Allow visible</button>
+            <button class="link" id="clear-regions">Clear allowlist</button>
+            <button class="link accent" id="recommend-regions">Use recommended</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- Servers -->
+    <section class="screen" id="screen-servers">
+      <article class="card">
+        <div class="card-head">
+          <div><h2>Known servers</h2><p>Observed endpoints and catalogue seeds, with the verdict each one gets.</p></div>
+          <div class="chip-row" id="server-chips">
+            <button class="chip is-active" data-verdict="all">All</button>
+            <button class="chip" data-verdict="allowed">Allowed</button>
+            <button class="chip" data-verdict="blocked">Blocked</button>
+            <button class="chip" data-verdict="observed">Observed</button>
+          </div>
+        </div>
+        <div class="field search wide">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
+          <input type="search" id="server-search" placeholder="Search IP, city, region or country">
+        </div>
+        <div class="table-wrap tall">
+          <table class="table" id="servers-table">
+            <thead>
+              <tr>
+                <th data-sort="cidr">Endpoint</th>
+                <th data-sort="city">City</th>
+                <th data-sort="region">Region</th>
+                <th class="num" data-sort="rtt_ms">Ping</th>
+                <th class="num" data-sort="packets">Packets</th>
+                <th class="num" data-sort="bytes">Data</th>
+                <th data-sort="verdict">Verdict</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="empty" id="servers-empty">No endpoints match this filter.</div>
+      </article>
+    </section>
+
+    <!-- Rules -->
+    <section class="screen" id="screen-rules">
+      <div class="split split-rules">
+        <article class="card editor-card">
+          <div class="card-head">
+            <div><h2>policy.yaml</h2><p id="policy-path">Stored in your roaming profile.</p></div>
+            <span class="tag" id="policy-state">Valid</span>
+          </div>
+          <textarea id="policy-editor" spellcheck="false" aria-label="Policy YAML"></textarea>
+          <div class="editor-foot">
+            <span class="hint" id="policy-hint">Changes apply when you save.</span>
+            <div>
+              <button class="btn btn-small" id="policy-revert">Revert</button>
+              <button class="btn btn-small btn-primary" id="policy-save">Save policy</button>
+            </div>
+          </div>
+        </article>
+
+        <div class="side-stack">
+          <article class="card">
+            <div class="card-head"><div><h2>Evaluation</h2><p>The order rules are applied.</p></div></div>
+            <ol class="order-list">
+              <li><strong>Game services</strong><span>Auth, lobby, ownership and content servers are always allowed.</span></li>
+              <li><strong>Deny</strong><span>Explicit blocks win over region rules.</span></li>
+              <li><strong>Pins</strong><span>Named ranges stay reachable.</span></li>
+              <li><strong>Allow</strong><span>Cluster, region, country or radius match.</span></li>
+              <li><strong>Ping limit</strong><span>Optional ceiling on measured round-trip.</span></li>
+              <li><strong>Default</strong><span>Allowlisted mode blocks located servers not matched above.</span></li>
+            </ol>
+          </article>
+          <article class="card">
+            <div class="card-head"><div><h2>This policy</h2><p id="policy-scope">0 regions allowed</p></div></div>
+            <dl class="kv" id="policy-facts"></dl>
+            <div class="notice" id="policy-notice" hidden></div>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section class="screen" id="screen-settings">
+      <div class="settings-grid">
+        <article class="card">
+          <div class="card-head"><div><h2>Startup</h2><p>How the app behaves when Windows starts.</p></div></div>
+          <div class="setting-row">
+            <div><strong>Start with Windows</strong><span>Launch minimised after you sign in.</span></div>
+            <label class="switch"><input type="checkbox" id="set-startup"><span></span></label>
+          </div>
+          <div class="setting-row">
+            <div><strong>Filter when the app starts</strong><span>Restore the last filtering state on launch.</span></div>
+            <label class="switch"><input type="checkbox" id="set-autofilter"><span></span></label>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><h2>Window</h2><p>What the close button does.</p></div></div>
+          <div class="setting-row">
+            <div><strong>Minimize to tray</strong><span>Closing the window keeps filtering in the background. Quit from the tray menu.</span></div>
+            <label class="switch"><input type="checkbox" id="set-tray"><span></span></label>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><h2>Privacy</h2><p>For recording and live streaming.</p></div></div>
+          <div class="setting-row">
+            <div><strong>Streamer mode</strong><span>Hides your home coordinates and server addresses. Regions still work; the map hides your home marker and radius ring.</span></div>
+            <label class="switch"><input type="checkbox" id="set-streamer"><span></span></label>
+          </div>
+          <p class="hint">Enable after setup. Rules editing is disabled while it is on, because the policy file contains your coordinates.</p>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><h2>Filtering behaviour</h2><p>Controls for slow or empty lobbies.</p></div></div>
+          <div class="setting-row">
+            <div><strong>Search guard</strong><span>Allow unknown endpoints if no match is found in time.</span></div>
+            <label class="switch"><input type="checkbox" id="set-soft"><span></span></label>
+          </div>
+          <div class="setting-row">
+            <div><strong>Relax after</strong><span>Seconds of searching before the guard lifts.</span></div>
+            <div class="inline-field">
+              <input type="number" id="set-soft-seconds" min="10" max="300" step="5">
+              <span>s</span>
+            </div>
+          </div>
+          <div class="setting-row">
+            <div><strong>Unclassified endpoints</strong><span>Servers the catalogue has not located yet.</span></div>
+            <select id="set-unknown">
+              <option value="allow">Allow</option>
+              <option value="deny">Block</option>
+            </select>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><h2>Rules backup</h2><p>Move your regions between machines.</p></div></div>
+          <p class="hint">Import replaces the current rules. Export writes a YAML file to your Documents folder; it contains your home coordinates, so streamer mode disables it.</p>
+          <div class="button-row">
+            <button class="btn btn-small" id="export-policy">Export policy</button>
+            <button class="btn btn-small" id="import-policy">Import policy</button>
+            <input type="file" id="import-policy-file" accept=".yaml,.yml" hidden>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><h2>Catalog</h2><p>Local database of endpoints and locations.</p></div></div>
+          <dl class="kv compact" id="catalog-facts"></dl>
+          <p class="hint" id="catalog-update-status"></p>
+          <div class="setting-row">
+            <div><strong>Resolve new endpoints</strong><span>Look up locations for servers you connect to.</span></div>
+            <label class="switch"><input type="checkbox" id="set-geo"><span></span></label>
+          </div>
+          <div class="button-row">
+            <button class="btn btn-small" id="update-catalog">Update from public lists</button>
+            <button class="btn btn-small" id="export-catalog">Export CSV</button>
+            <button class="btn btn-small" id="open-folder">Open data folder</button>
+            <button class="btn btn-small btn-danger-ghost" id="reset-catalog">Reset catalog</button>
+          </div>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><h2>Application</h2><p>Version and environment.</p></div></div>
+          <dl class="kv compact" id="app-facts"></dl>
+          <p class="fineprint">
+            Filtering works by dropping game packets at the Windows packet layer. It does not modify
+            the game or its memory. Call of Duty's terms give Activision the right to restrict
+            network manipulation, so use this at your own risk.
+          </p>
+          <div class="button-row">
+            <button class="btn btn-small" id="quit-app">Quit app</button>
+          </div>
+        </article>
+        <article class="card">
+          <div class="card-head"><div><h2>Diagnostics</h2><p>Useful when asking for help.</p></div></div>
+          <dl class="kv compact" id="diag-facts"></dl>
+          <div class="button-row">
+            <button class="btn btn-small" id="copy-diag">Copy diagnostics</button>
+            <button class="btn btn-small" id="open-log">Open log folder</button>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div class="modal-backdrop" id="modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <h2 id="modal-title">Confirm</h2>
+    <p id="modal-text"></p>
+    <div class="modal-actions">
+      <button class="btn" id="modal-cancel">Cancel</button>
+      <button class="btn btn-primary" id="modal-confirm">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-stack" id="toasts" aria-live="polite"></div>
+<script src="world.js?v=1.0.1"></script>
+<script src="app.js?v=1.0.1"></script>
+</body>
+</html>
