@@ -17,7 +17,7 @@ then drops packets to servers outside your rules. When this happens the game see
 and searches again.
 
 <p align="center">
-  <img src="docs/screenshots/dashboard.jpg" alt="Dashboard showing the current match and recent servers" width="100%">
+  <a href="docs/screenshots/dashboard.png"><img src="docs/screenshots/dashboard.png" alt="Dashboard showing the current match and recent servers" width="100%"></a>
 </p>
 
 ## What it does
@@ -60,12 +60,14 @@ catalog live in your Windows user profile, so reinstalling does not wipe them.
 
 ## Setup, step by step
 
+Click any screenshot to open the full-resolution version.
+
 ### 1. Check the basics
 
 The first screen confirms that the app is running elevated, that the packet
 driver loaded, and that the catalog is ready.
 
-<img src="docs/screenshots/setup-1.jpg" alt="Setup step 1: game, administrator and catalog checks" width="100%">
+<a href="docs/screenshots/setup-1.png"><img src="docs/screenshots/setup-1.png" alt="Setup step 1: game, administrator and catalog checks" width="100%"></a>
 
 If the administrator check fails, close the app and start it with **Run as
 administrator**. It still opens without elevation, but it can only watch traffic;
@@ -77,7 +79,7 @@ Click **Detect location**, or click your area on the map. The coordinates give
 the radius and the recommendations something to measure from. You can change or
 reset this later on the Regions screen.
 
-<img src="docs/screenshots/setup-2.jpg" alt="Setup step 2: home location" width="100%">
+<a href="docs/screenshots/setup-2.png"><img src="docs/screenshots/setup-2.png" alt="Setup step 2: home location" width="100%"></a>
 
 The lookup goes to [ipwho.is](https://ipwho.is) over HTTPS. Nothing else about you
 is sent.
@@ -89,7 +91,7 @@ measurement. Uncheck anything you would not play on, then click **Use
 recommended**. That switches the policy to allowlist mode and blocks servers it
 has not classified yet. The search guard is the way out if the list is too tight.
 
-<img src="docs/screenshots/setup-3.jpg" alt="Setup step 3: recommended regions" width="100%">
+<a href="docs/screenshots/setup-3.png"><img src="docs/screenshots/setup-3.png" alt="Setup step 3: recommended regions" width="100%"></a>
 
 Start the game and play a match.
 
@@ -108,7 +110,7 @@ Click the map to move your home. The list on the right is grouped by country and
 shows the observed ping for each region. The slider sets a radius in kilometres;
 everything inside is allowed.
 
-<img src="docs/screenshots/regions.jpg" alt="Regions screen" width="100%">
+<a href="docs/screenshots/regions.png"><img src="docs/screenshots/regions.png" alt="Regions screen" width="100%"></a>
 
 In allowlist mode, checking a region allows it. In blocklist mode, checking a
 region blocks it and everything else stays reachable. The header and the allowlist
@@ -120,7 +122,7 @@ Everything the app has seen or imported: city, region, ping, bytes, verdict and
 when it was last seen. Search by city or address, filter by verdict, sort any
 column. The CSV export contains the same rows.
 
-<img src="docs/screenshots/servers.jpg" alt="Servers screen" width="100%">
+<a href="docs/screenshots/servers.png"><img src="docs/screenshots/servers.png" alt="Servers screen" width="100%"></a>
 
 ### Rules
 
@@ -128,15 +130,23 @@ A live editor for the policy YAML. Bad YAML is rejected with a line number, and
 the evaluation order sits next to the editor. The same file can be exported and
 imported under Settings.
 
-<img src="docs/screenshots/rules.jpg" alt="Rules screen" width="100%">
+<a href="docs/screenshots/rules.png"><img src="docs/screenshots/rules.png" alt="Rules screen" width="100%"></a>
 
 ### Settings
 
-Startup, window behaviour, streamer mode, filtering behaviour, rules backup,
-catalog refresh, diagnostics and the quit button. **Minimize to tray** is on by
-default; turn it off if you want the close button to exit.
+Startup, window behaviour, streamer mode, filtering behaviour, rules backup and
+catalog refresh. **Minimize to tray** is on by default; turn it off if you want
+the close button to exit.
 
-<img src="docs/screenshots/settings.jpg" alt="Settings screen" width="100%">
+<a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings screen" width="100%"></a>
+
+### Diagnostics
+
+Version, elevation, driver state, watched ports, service pins, packet counters
+and match count, plus buttons for copying the summary and opening the log
+folder. It sits in the sidebar rather than at the bottom of Settings.
+
+<a href="docs/screenshots/diagnostics.png"><img src="docs/screenshots/diagnostics.png" alt="Diagnostics screen" width="100%"></a>
 
 ## How a packet is decided
 
