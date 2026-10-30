@@ -1,4 +1,4 @@
-/* COD Ping King UI. No framework, no build step. */
+﻿/* COD Ping King UI. No framework, no build step. */
 
 const ICONS = {
   dashboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>',
@@ -356,10 +356,15 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "1.0.2",
+        version: "1.0.3",
         elevated: true,
         driver: true,
-        game: { pid: 12844, name: "cod.exe", exe: "C:\\Games\\Call of Duty\\cod.exe" },
+        game: {
+          pid: 12844,
+          name: "cod.exe",
+          exe: "C:\\Games\\Call of Duty\\cod.exe",
+          match: "exact name",
+        },
         config,
         policy_text: config.streamer_mode ? "" : policyText(),
         streamer: Boolean(config.streamer_mode),
@@ -406,7 +411,7 @@ soft_mode:
     poll() {
       return {
         state: statePayload(),
-        game: { pid: 12844, name: "cod.exe", exe: "" },
+        game: { pid: 12844, name: "cod.exe", exe: "", match: "exact name" },
         capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [3074] },
         elevated: true,
         summary: summary(),
@@ -1026,7 +1031,12 @@ function renderSettings() {
     ["Version", boot.version],
     ["Administrator", boot.elevated ? "Yes" : "No"],
     ["Packet driver", boot.driver ? (capture.running ? "Running" : "Ready") : "Not installed"],
-    ["Game", boot.game ? `${boot.game.name} (${boot.game.pid})` : "Not detected"],
+    [
+      "Game",
+      boot.game
+        ? `${boot.game.name} (${boot.game.pid}) via ${boot.game.match || "name"}`
+        : "Not detected",
+    ],
   ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
 
   const st = boot.state || {};

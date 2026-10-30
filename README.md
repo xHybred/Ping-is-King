@@ -1,4 +1,4 @@
-<p align="center">
+﻿<p align="center">
   <img src="docs/brand/banner.png" alt="COD Ping King" width="100%">
 </p>
 
@@ -45,12 +45,13 @@ relax the filter rather than leave you searching forever (this can be raised or 
 - WebView2. Windows 11 ships with it; on Windows 10 it usually arrives with Edge.
   The installer offers it if it is missing.
 - Administrator rights. The packet driver needs them, and the app asks on launch.
-- Call of Duty installed. Modern Warfare 4 is what I tested against, but the same
-  approach should work on other recent titles.
+- Call of Duty installed. Any title from Modern Warfare (2019) onward: the app
+  matches `cod.exe` as well as prefixed builds such as `cod25-cod.exe`, so a
+  renamed executable is still detected.
 
 ## Install
 
-1. Download `COD-Ping-King-1.0.0.exe` from the releases page.
+1. Download `COD-Ping-King-1.0.3.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
@@ -204,9 +205,11 @@ download. There is no telemetry and no account.
 **"Administrator required" banner.** Close the app and start it again elevated.
 The installer launches it elevated, but a shortcut you made yourself may not.
 
-**Game not detected.** It looks for `cod.exe`, `cod_hq.exe`, `modernwarfare*.exe`,
-`mw4.exe`, `warzone.exe` and the Black Ops names. Start the game first; the process
-list is checked while filtering runs.
+**Game not detected.** It matches `cod.exe`, `cod_hq.exe`, `modernwarfare.exe`,
+`blackopscoldwar.exe`, `warzone.exe`, and any `<prefix>-cod.exe` build such as
+`cod24-cod.exe` or `cod25-cod.exe`. Campaign executables (`sp24-cod.exe`) are
+ignored on purpose. Start the game first; the process list is checked while
+filtering runs, and **Diagnostics** shows which file was matched.
 
 **The wizard recommends nothing.** It needs a home location and at least one
 located cluster. Run **Settings -> Update from public lists**, then try again. A
@@ -304,7 +307,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-1.0.0.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-1.0.3.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 

@@ -30,6 +30,8 @@ class CaptureWorker(threading.Thread):
         self._stop = threading.Event()
         self._handle = None
         self._pid: int | None = None
+        self._pids: tuple[int, ...] = ()
+        self._game: dict | None = None
         self._ports: tuple[int, ...] = ()
         self._status = "starting"
         self._error = ""
@@ -42,6 +44,8 @@ class CaptureWorker(threading.Thread):
             "status": self._status,
             "error": self._error,
             "pid": self._pid,
+            "pids": list(self._pids),
+            "game": self._game,
             "ports": list(self._ports),
         }
 
@@ -64,15 +68,33 @@ class CaptureWorker(threading.Thread):
         return "udp and (" + " or ".join(parts) + ")"
 
     def _refresh_target(self) -> bool:
-        game = games.find_game()
-        if not game:
+        found = games.find_games()
+        if not found:
             self._pid = None
+            self._pids = ()
+            self._game = None
             self._ports = ()
             self._status = "waiting for game"
             return False
-        ports = tuple(games.udp_ports(game["pid"]))
-        changed = game["pid"] != self._pid or ports != self._ports
-        self._pid = game["pid"]
+
+        ports_by_pid = games.udp_ports_map([game["pid"] for game in found])
+        # A launcher and a game module can coexist; capture the union so the
+        # filter does not depend on which one psutil lists first.
+        primary = max(found, key=lambda game: (len(ports_by_pid.get(game["pid"], ())), game["pid"]))
+        ports = tuple(sorted({port for values in ports_by_pid.values() for port in values}))
+        previous = self._game or {}
+        changed = (
+            primary["pid"] != self._pid
+            or primary["name"] != previous.get("name")
+            or ports != self._ports
+        )
+        if primary["name"] != previous.get("name"):
+            self.log(
+                f"game detected: {primary['name']} (pid {primary['pid']}, {primary['match']})"
+            )
+        self._pid = primary["pid"]
+        self._pids = tuple(sorted(game["pid"] for game in found))
+        self._game = primary
         self._ports = ports
         if not ports:
             self._status = "game running, no UDP sockets yet"

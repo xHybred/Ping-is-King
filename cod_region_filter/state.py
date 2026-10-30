@@ -1,4 +1,4 @@
-"""Application state: owns the catalog, policy, engine and workers."""
+﻿"""Application state: owns the catalog, policy, engine and workers."""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from .capture import CaptureWorker, available as driver_available
 from .engine import Engine
 from .policy import PolicyEngine, parse as parse_policy, dump as dump_policy
 
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 
 DEFAULT_CONFIG = {
     "filtering": True,
