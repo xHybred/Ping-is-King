@@ -2,7 +2,7 @@
   <img src="docs/brand/banner.png" alt="COD Ping King" width="100%">
 </p>
 
-# COD Ping King
+# PiK Tool
 
 **Ping is King**
 
@@ -11,9 +11,9 @@ there was no setting to tell it otherwise. It is a packet filter for Call of Dut
 on Windows: you choose the regions you are willing to play on, and traffic to
 everything else is dropped.
 
-It is not a VPN. It does not modify the game or read its memory. The app watches
+It's not a VPN, nor does it does it modify the game or read its memory. The app watches
 the game's UDP traffic with WinDivert, works out which server the match is using,
-and drops packets to servers outside your rules. The game sees a dead endpoint
+then drops packets to servers outside your rules. When this happens the game sees a dead endpoint
 and searches again.
 
 <p align="center">
@@ -37,7 +37,7 @@ and searches again.
 Matchmaking has its own idea of where you should play, and this does not change
 how the game rates you. It only limits which servers are reachable. If the
 closest servers have nobody in your bracket, the search guard will eventually
-relax the filter rather than leave you searching forever.
+relax the filter rather than leave you searching forever (this can be raised or disabled. User choice).
 
 ## Requirements
 
