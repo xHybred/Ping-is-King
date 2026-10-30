@@ -51,7 +51,7 @@ relax the filter rather than leave you searching forever (this can be raised or 
 
 ## Install
 
-1. Download `COD-Ping-King-1.0.3.exe` from the releases page.
+1. Download `COD-Ping-King-1.0.4.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
@@ -137,7 +137,9 @@ imported under Settings.
 
 Startup, window behaviour, streamer mode, filtering behaviour, rules backup and
 catalog refresh. **Minimize to tray** is on by default; turn it off if you want
-the close button to exit.
+the close button to exit. **Start with Windows** registers a logon task that runs
+the app elevated and minimized to the tray; a Run key cannot do that because
+Windows will not show a UAC prompt during sign-in.
 
 <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings screen" width="100%"></a>
 
@@ -307,7 +309,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-1.0.3.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-1.0.4.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 

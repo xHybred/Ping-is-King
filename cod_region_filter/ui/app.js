@@ -356,7 +356,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "1.0.3",
+        version: "1.0.4",
         elevated: true,
         driver: true,
         game: {
@@ -1156,6 +1156,9 @@ async function mutate(promise, successMessage) {
     const result = await promise;
     if (result && result.ok === false) {
       toast((result.errors && result.errors.join("; ")) || result.error || "Change rejected", "bad");
+      // Put the control back in line with the stored setting; the change never
+      // reached the backend.
+      await refresh();
       return false;
     }
     if (result && result.warnings && result.warnings.length) {

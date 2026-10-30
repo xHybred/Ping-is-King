@@ -9,13 +9,13 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import catalog_update, games, geo, paths, policy as policy_mod, services, titlebar
+from . import catalog_update, games, geo, paths, policy as policy_mod, services, startup, titlebar
 from .catalog import Catalog, cidr_for
 from .capture import CaptureWorker, available as driver_available
 from .engine import Engine
 from .policy import PolicyEngine, parse as parse_policy, dump as dump_policy
 
-APP_VERSION = "1.0.3"
+APP_VERSION = "1.0.4"
 
 DEFAULT_CONFIG = {
     "filtering": True,
@@ -34,19 +34,12 @@ LEGACY_RUN_VALUE = "CodRegionFilter"
 
 
 def clear_legacy_startup() -> None:
-    """Drop the pre-rename autostart entry so it cannot launch an old path."""
-    if sys.platform != "win32":
-        return
-    try:
-        import winreg
+    """Drop autostart entries from older builds; they cannot start an elevated exe."""
+    startup.clear_run_entries()
 
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
-            try:
-                winreg.DeleteValue(key, LEGACY_RUN_VALUE)
-            except FileNotFoundError:
-                pass
-    except OSError:
-        pass
+
+def set_run_at_startup(enabled: bool) -> tuple[bool, str]:
+    return startup.enable() if enabled else startup.disable()
 
 
 def _read_json(path: Path, fallback: dict) -> dict:
@@ -109,6 +102,10 @@ class AppState:
         paths.migrate_legacy()
         self.config = _read_json(paths.config_path(), DEFAULT_CONFIG)
         self.config["theme"] = titlebar.normalise(self.config.get("theme", "midnight"))
+        if self.config.get("start_with_windows"):
+            # An upgrade may have kept the setting without the logon task, and
+            # older builds only wrote a Run key that cannot elevate.
+            startup.sync()
         self.catalog = Catalog()
         if self.catalog.is_empty():
             seeded = self.catalog.seed()
@@ -486,13 +483,23 @@ class AppState:
     def set_setting(self, key: str, value) -> dict:
         if key not in DEFAULT_CONFIG:
             return {"ok": False, "error": f"unknown setting {key}"}
+
+        if key == "start_with_windows":
+            ok, error = set_run_at_startup(bool(value))
+            if not ok:
+                # Keep the old value on disk so the switch reflects what Windows
+                # actually has, instead of claiming a task that was never created.
+                return {
+                    "ok": False,
+                    "error": error or "Windows did not accept the startup task.",
+                    "config": self.config,
+                }
+
         self.config[key] = value
         _write_json(paths.config_path(), self.config)
 
         if key == "filtering":
             self.engine.set_filtering(bool(value))
-        elif key == "start_with_windows":
-            set_run_at_startup(bool(value))
         elif key == "auto_geolocate" and value:
             self._queue_geo()
         return {"ok": True, "config": self.config}

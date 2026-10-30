@@ -131,6 +131,10 @@ def main(argv: list[str] | None = None) -> int:
     state.start()
     api = Api(state)
 
+    # A logon launch must not flash a window; --minimized starts hidden and
+    # only the tray icon appears. Without pystray, show the window instead of
+    # starting invisible with no way back.
+    start_hidden = bool(args.minimized and tray_mod.available())
     window = webview.create_window(
         WINDOW_TITLE,
         url=(paths.ui_dir() / "index.html").as_uri(),
@@ -140,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
         min_size=(1040, 700),
         background_color="#101215",
         text_select=True,
+        hidden=start_hidden,
     )
 
     def on_closed() -> None:
@@ -197,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
 
     def after_start() -> None:
         apply_titlebar(state.config.get("theme", "midnight"))
-        if args.minimized and tray_ctl is not None:
+        if start_hidden and tray_ctl is not None:
             window.hide()
             tray_ctl.show()
 
