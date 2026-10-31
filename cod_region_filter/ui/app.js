@@ -242,6 +242,7 @@ const demo = (() => {
     deny: { regions: [], clusters: [], countries: [], cidrs: [] },
     max_rtt_ms: 0,
     soft_mode: { enabled: true, relax_after_s: 45 },
+    strict: false,
   };
 
   const config = {
@@ -285,7 +286,7 @@ const demo = (() => {
     current,
     recent: [
       { ip: "198.51.100.19", port: 3074, reason: "Not in allowlist", at: "2026-10-30T17:05:12+00:00" },
-      { ip: "203.0.113.28", port: 3074, reason: "Allowed by region", at: "2026-10-30T16:58:03+00:00" },
+      { ip: "203.0.113.28", port: 3074, reason: "Unclassified endpoint blocked", at: "2026-10-30T16:58:03+00:00" },
     ],
   };
 
@@ -330,6 +331,7 @@ soft_mode:
       allow: policy.allow,
       deny: policy.deny,
       soft: policy.soft_mode,
+      strict: Boolean(policy.strict),
     };
   }
 
@@ -356,7 +358,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "1.0.4",
+        version: "1.0.5",
         elevated: true,
         driver: true,
         game: {
@@ -472,6 +474,7 @@ soft_mode:
     export_discovered: () => ({ ok: true, path: "%USERPROFILE%\\Documents\\cod-ping-king-discovered.json", count: 0 }),
     set_soft_mode(enabled, seconds) { policy.soft_mode.enabled = enabled; policy.soft_mode.relax_after_s = seconds; return { ok: true }; },
     set_unknown(mode) { policy.unknown = mode; return { ok: true }; },
+    set_strict(on) { policy.strict = Boolean(on); return { ok: true }; },
     set_filtering(on) { stateObj.filtering = on; config.filtering = on; return { ok: true, config }; },
     set_region_blocked(key, blocked) {
       const deny = new Set(policy.deny.regions);
@@ -1011,6 +1014,7 @@ function renderSettings() {
   $("#set-soft-seconds").value = (summary.soft && summary.soft.relax_after_s) || 45;
   $("#set-soft-seconds").disabled = !(summary.soft && summary.soft.enabled);
   $("#set-unknown").value = summary.unknown || "allow";
+  $("#set-strict").value = summary.strict ? "strict" : "safe";
   $("#set-geo").checked = Boolean(cfg.auto_geolocate);
   $("#show-seed").checked = Boolean(state.showSeed);
 
@@ -1044,10 +1048,24 @@ function renderSettings() {
     ["Watched UDP ports", (capture.ports || []).join(", ") || "None"],
     ["Service endpoints pinned", summary.service_pins || 0],
     ["Policy", `${summary.mode || "?"}, unknown ${summary.unknown || "?"}`],
+    ["Blocking scope", summary.strict ? "Strict" : "Safe"],
     ["Allowed / denied packets", `${st.allowed_packets || 0} / ${st.denied_packets || 0}`],
     ["Matches recorded", st.match_count || 0],
     ["Driver status", capture.status || "unknown"],
   ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join("");
+
+  const recent = st.recent || [];
+  $("#blocked-wrap").hidden = recent.length === 0;
+  $("#blocked-empty").hidden = recent.length > 0;
+  $("#blocked-table").querySelector("tbody").innerHTML = recent
+    .map(
+      (row) => `<tr>
+        <td><code>${esc(row.ip)}:${esc(row.port)}</code></td>
+        <td>${esc(row.reason || "")}</td>
+        <td class="muted">${esc(String(row.at || "").replace("T", " ").slice(0, 19))}</td>
+      </tr>`
+    )
+    .join("");
 
   const streamer = Boolean(cfg.streamer_mode);
   for (const id of ["#export-policy", "#import-policy"]) {
@@ -1565,6 +1583,7 @@ function bindEvents() {
   });
   $("#set-soft-seconds").addEventListener("change", (e) => mutate(call("set_soft_mode", $("#set-soft").value !== "off", Number(e.target.value) || 45), "Search guard delay saved"));
   $("#set-unknown").addEventListener("change", (e) => mutate(call("set_unknown", e.target.value), "Unknown endpoint rule saved"));
+  $("#set-strict").addEventListener("change", (e) => mutate(call("set_strict", e.target.value === "strict"), e.target.value === "strict" ? "Strict scope saved" : "Safe scope saved"));
   $("#update-catalog").addEventListener("click", async () => {
     const result = await call("update_catalog");
     if (!result.ok) {

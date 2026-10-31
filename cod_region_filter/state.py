@@ -15,7 +15,7 @@ from .capture import CaptureWorker, available as driver_available
 from .engine import Engine
 from .policy import PolicyEngine, parse as parse_policy, dump as dump_policy
 
-APP_VERSION = "1.0.4"
+APP_VERSION = "1.0.5"
 
 DEFAULT_CONFIG = {
     "filtering": True,
@@ -147,6 +147,10 @@ class AppState:
             return policy_mod.default_policy()
         return parsed
 
+    def _refresh_services(self) -> None:
+        if not self._stop.is_set():
+            self._pin_services()
+
     def _pin_services(self) -> None:
         try:
             ips = services.resolve_services()
@@ -190,17 +194,28 @@ class AppState:
     def _tick_loop(self) -> None:
         last_flush = 0.0
         last_refresh = 0.0
+        last_services = 0.0
         while not self._stop.is_set():
             now = time.monotonic()
             self.engine.tick()
             if now - last_flush > 2.0:
                 last_flush = now
                 self.catalog.flush()
+                # Rebuild on this thread. The capture thread only reads the
+                # index, and rebuilding 6k ranges there stalls re-injection.
+                self.catalog.index()
             if now - last_refresh > 5.0:
                 last_refresh = now
                 self.refresh_catalog()
                 if self.config.get("auto_geolocate", True):
                     self._queue_geo()
+            if now - last_services > 600.0:
+                last_services = now
+                # Demonware and the platform frontends move between addresses;
+                # a pin list resolved only at launch goes stale.
+                threading.Thread(
+                    target=self._refresh_services, name="services", daemon=True
+                ).start()
             self._stop.wait(1.0)
 
     def _queue_geo(self) -> None:
@@ -210,6 +225,7 @@ class AppState:
 
     def _on_geo(self, cidr: str, result: dict) -> None:
         self.catalog.resolve_location(cidr, result)
+        self.catalog.index()
         self.refresh_catalog()
 
     def refresh_catalog(self) -> None:
@@ -525,6 +541,12 @@ class AppState:
 
         def mutate(p: policy_mod.Policy) -> None:
             p.unknown = mode
+
+        return self.update_policy(mutate)
+
+    def set_strict(self, enabled: bool) -> dict:
+        def mutate(p: policy_mod.Policy) -> None:
+            p.strict = bool(enabled)
 
         return self.update_policy(mutate)
 

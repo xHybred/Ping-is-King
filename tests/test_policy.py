@@ -191,6 +191,15 @@ def test_fresh_install_blocks_nothing():
     assert eng.summary()["empty_allowlist"] is False
 
 
+def test_strict_scope_round_trips_and_defaults_safe():
+    p, errors = parse("mode: allowlist\nunknown: deny\nstrict: true\n")
+    assert errors == [] and p is not None and p.strict is True
+    assert "strict: true" in dump(p)
+    p2, errors = parse("mode: allowlist\n")
+    assert errors == [] and p2.strict is False
+    assert default_policy().strict is False
+
+
 def test_summary_counts_allowed_clusters():
     p = Policy(allow=AllowSpec(regions=["US-OH"]))
     eng = engine(p)

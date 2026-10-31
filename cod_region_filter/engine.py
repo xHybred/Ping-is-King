@@ -16,6 +16,13 @@ MATCH_MIN_PACKETS = 40
 MATCH_IDLE_END_S = 15.0
 RTT_MAX_S = 0.5
 
+# Safe scope. A known server range is dropped once the flow has a few packets
+# so a matchmaking probe can still complete; anything else has to look like a
+# live session before it is dropped. Strict mode ignores both.
+KNOWN_DROP_PACKETS = 4
+SESSION_MIN_PACKETS = 12
+SESSION_MIN_SECONDS = 0.8
+
 
 def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat(timespec="seconds")
@@ -35,6 +42,7 @@ class Flow:
     last_in: float | None = None
     rtt_samples: deque[float] = field(default_factory=lambda: deque(maxlen=32))
     verdict: dict = field(default_factory=dict)
+    cidr: str = ""
 
     def rtt_ms(self) -> float | None:
         if not self.rtt_samples:
@@ -67,6 +75,7 @@ class Engine:
         self._denied_total = 0
         self._allowed_total = 0
         self._recent_verdicts: deque[dict] = deque(maxlen=50)
+        self._denial_log: dict[str, float] = {}
         self._match_count = 0
 
     # -- controls --------------------------------------------------------
@@ -112,7 +121,9 @@ class Engine:
             key = (ip, port)
             flow = self._flows.get(key)
             if flow is None:
-                flow = self._flows[key] = Flow(ip=ip, port=port, first_seen=now, last_seen=now)
+                flow = self._flows[key] = Flow(
+                    ip=ip, port=port, first_seen=now, last_seen=now, cidr=cidr_for(ip)
+                )
             flow.last_seen = now
             flow.packets += 1
             flow.bytes += size
@@ -130,7 +141,7 @@ class Engine:
                         flow.rtt_samples.append(gap)
                         rtt_sample = gap * 1000
 
-            self.catalog.observe(ip, size, rtt_sample)
+            self.catalog.observe(ip, size, rtt_sample, cidr=flow.cidr)
 
             if not self._filtering:
                 flow.verdict = {"allow": True, "reason": "Filtering off", "kind": "off"}
@@ -150,11 +161,14 @@ class Engine:
             if not verdict["allow"] and verdict.get("kind") == "unknown" and self._soft_relaxed(now):
                 verdict = {"allow": True, "reason": "Soft mode", "kind": "soft"}
 
+            verdict = self._scope(flow, verdict, rec, now)
+
             flow.verdict = verdict
             if verdict["allow"]:
                 self._allowed_total += 1
             else:
                 self._denied_total += 1
+                self._log_denial(ip, port, verdict, now)
                 self._recent_verdicts.appendleft(
                     {
                         "ip": ip,
@@ -164,6 +178,40 @@ class Engine:
                     }
                 )
             return verdict
+
+    def _scope(self, flow: Flow, verdict: dict, rec, now: float) -> dict:
+        """Keep automatic filtering away from endpoints that are not a session.
+
+        Matchmaking, lobby and party traffic is short-lived and often lands on
+        cloud ranges the server lists have never seen. Dropping those broke
+        matchmaking for some players, so safe scope waits for a flow to look
+        like a game session. Explicit rules (deny lists, per-match blocks)
+        always apply, and strict mode restores the old unconditional drop.
+        """
+        if verdict["allow"] or self.policy.policy.strict:
+            return verdict
+        if verdict.get("kind") == "deny":
+            return verdict
+        if rec is not None and rec.known_server:
+            if flow.packets >= KNOWN_DROP_PACKETS:
+                return verdict
+            return {"allow": True, "reason": "Settling in", "kind": "grace"}
+        busy = (
+            flow.packets >= SESSION_MIN_PACKETS
+            and now - flow.first_seen >= SESSION_MIN_SECONDS
+        )
+        if busy:
+            return verdict
+        return {"allow": True, "reason": "Not a game session yet", "kind": "grace"}
+
+    def _log_denial(self, ip: str, port: int, verdict: dict, now: float) -> None:
+        last = self._denial_log.get(ip)
+        if last is not None and now - last < 60.0:
+            return
+        if len(self._denial_log) > 512:
+            self._denial_log.clear()
+        self._denial_log[ip] = now
+        self.log(f"blocked {ip}:{port} ({verdict['reason']})")
 
     # -- match detection -------------------------------------------------
 

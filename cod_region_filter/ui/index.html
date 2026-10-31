@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COD Ping King</title>
-<link rel="stylesheet" href="styles.css?v=1.0.4">
+<link rel="stylesheet" href="styles.css?v=1.0.5">
 </head>
 <body>
 <div id="app">
@@ -59,7 +59,7 @@
         </div>
       </div>
       <div class="rail-meta">
-        <span id="rail-version">v1.0.4</span>
+        <span id="rail-version">v1.0.5</span>
         <button class="link" id="rail-pause">Pause</button>
       </div>
     </div>
@@ -353,6 +353,14 @@
         <article class="card">
           <div class="card-head"><div><h2>Diagnostics</h2><p>Useful when asking for help.</p></div></div>
           <dl class="kv compact" id="diag-facts"></dl>
+          <h3>Recently blocked</h3>
+          <p class="hint" id="blocked-empty">Nothing blocked in this session.</p>
+          <div class="table-wrap" id="blocked-wrap" hidden>
+            <table class="table" id="blocked-table">
+              <thead><tr><th>Endpoint</th><th>Reason</th><th>When</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
           <div class="button-row">
             <button class="btn btn-small" id="copy-diag">Copy diagnostics</button>
             <button class="btn btn-small" id="open-log">Open log folder</button>
@@ -428,6 +436,13 @@
               <option value="deny">Block</option>
             </select>
           </div>
+          <div class="setting-row">
+            <div><strong>Blocking scope</strong><span>Safe drops listed servers and live sessions. Strict drops every endpoint outside your rules, including matchmaking and lobby traffic it does not recognise.</span></div>
+            <select id="set-strict">
+              <option value="safe">Safe</option>
+              <option value="strict">Strict</option>
+            </select>
+          </div>
         </article>
 
         <article class="card">
@@ -474,7 +489,7 @@
 </div>
 
 <div class="toast-stack" id="toasts" aria-live="polite"></div>
-<script src="world.js?v=1.0.4"></script>
-<script src="app.js?v=1.0.4"></script>
+<script src="world.js?v=1.0.5"></script>
+<script src="app.js?v=1.0.5"></script>
 </body>
 </html>

@@ -51,6 +51,10 @@ class Policy:
     deny: DenySpec = field(default_factory=DenySpec)
     max_rtt_ms: int = 0
     soft_mode: SoftMode = field(default_factory=SoftMode)
+    # Safe scope drops only known game-server ranges immediately; everything
+    # else has to look like a live session first. Strict restores the old
+    # behaviour of dropping any endpoint the allowlist rejects.
+    strict: bool = False
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -99,6 +103,7 @@ def parse(text: str) -> tuple[Policy | None, list[str]]:
     policy.unknown = str(raw.get("unknown", "allow")).strip().lower()
     if policy.unknown not in UNKNOWN_CHOICES:
         errors.append(f"unknown must be one of {', '.join(UNKNOWN_CHOICES)}")
+    policy.strict = bool(raw.get("strict", False))
 
     home = _mapping(raw.get("home"), "home", errors)
     if home and home.get("lat") is not None and home.get("lon") is not None:
@@ -147,7 +152,7 @@ def parse(text: str) -> tuple[Policy | None, list[str]]:
             policy.soft_mode.relax_after_s = 45
 
     known = {
-        "mode", "unknown", "home", "allow", "deny", "max_rtt_ms", "soft_mode",
+        "mode", "unknown", "home", "allow", "deny", "max_rtt_ms", "soft_mode", "strict",
     }
     for key in raw:
         if key not in known:
@@ -160,6 +165,7 @@ def dump(policy: Policy) -> str:
     data = {
         "mode": policy.mode,
         "unknown": policy.unknown,
+        "strict": policy.strict,
         "home": {"lat": policy.home_lat, "lon": policy.home_lon},
         "allow": {
             "regions": sorted(policy.allow.regions),
@@ -184,6 +190,7 @@ def dump(policy: Policy) -> str:
         "# COD Ping King policy\n"
         "# mode: allowlist blocks every located server that is not allowed below.\n"
         "# unknown: what to do with endpoints the catalog has not located yet.\n"
+        "# strict: true drops every located endpoint; false drops listed servers and busy sessions only.\n"
         "# Edits apply immediately; the app validates and rejects broken files.\n"
     )
     return header + yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
@@ -330,6 +337,7 @@ class PolicyEngine:
         return {
             "mode": p.mode,
             "unknown": p.unknown,
+            "strict": p.strict,
             "clusters": len(located),
             "allowed_clusters": allowed,
             "radius_keys": len(self._radius_keys),

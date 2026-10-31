@@ -51,7 +51,7 @@ relax the filter rather than leave you searching forever (this can be raised or 
 
 ## Install
 
-1. Download `COD-Ping-King-1.0.4.exe` from the releases page.
+1. Download `COD-Ping-King-1.0.5.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
@@ -139,15 +139,17 @@ Startup, window behaviour, streamer mode, filtering behaviour, rules backup and
 catalog refresh. **Minimize to tray** is on by default; turn it off if you want
 the close button to exit. **Start with Windows** registers a logon task that runs
 the app elevated and minimized to the tray; a Run key cannot do that because
-Windows will not show a UAC prompt during sign-in.
+Windows will not show a UAC prompt during sign-in. **Blocking scope** decides how
+aggressive filtering is; see below.
 
 <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings screen" width="100%"></a>
 
 ### Diagnostics
 
-Version, elevation, driver state, watched ports, service pins, packet counters
-and match count, plus buttons for copying the summary and opening the log
-folder. It sits in the sidebar rather than at the bottom of Settings.
+Version, elevation, driver state, watched ports, service pins, packet counters,
+blocking scope and match count, plus a list of endpoints blocked this session
+with the reason for each. The buttons copy the summary and open the log folder.
+It sits in the sidebar rather than at the bottom of Settings.
 
 <a href="docs/screenshots/diagnostics.png"><img src="docs/screenshots/diagnostics.png" alt="Diagnostics screen" width="100%"></a>
 
@@ -162,9 +164,21 @@ Every UDP packet on the game's ports is checked in this order:
 5. **Radius** - clusters inside the circle around home.
 6. **Ping limit** - optional maximum estimated RTT.
 7. **Default** - allow or deny endpoints that are not in the catalog.
+8. **Scope** - safe scope only drops listed server ranges and flows that look
+   like a live session; strict drops anything the rules reject.
 
 A denied outbound packet is dropped without a reset. The game sees a dead
 endpoint and picks another one, and the server is never told it was refused.
+
+Safe scope is the default because matchmaking, lobby and party traffic often
+lands on cloud addresses that no server list contains. It waits for a flow to
+look like a game session before dropping it, and always applies your explicit
+deny rules. Strict is there if you want the older behaviour and do not mind the
+occasional matchmaking failure.
+
+Auth, lobby, ownership and CDN addresses are resolved at launch and refreshed
+every ten minutes. If one is ever blocked, Diagnostics shows the endpoint and
+reason, and the log keeps a rate-limited line per address.
 
 If the app exits or crashes, the driver closes and Windows routes normally again.
 There are no firewall rules left behind.
@@ -237,8 +251,12 @@ block it. If an older build is still running, end it once from Task Manager.
 ## Limitations
 
 - **Modern Warfare 4 coverage is unverified.** Early sessions will contain
-  endpoints the catalog has not located. The wizard blocks those by default; the
-  search guard is the exception.
+  endpoints the catalog has not located. Safe scope waits for a session before
+  dropping those; strict mode blocks them from the first packet.
+- **Safe scope is a trade.** An uncatalogued server can receive a short burst of
+  traffic before it is dropped, and a brand-new server range may be allowed if it
+  never looks like a session. Strict mode avoids that at the cost of breaking
+  matchmaking when it meets an endpoint it does not recognise.
 - **Geolocation is approximate.** Game servers run on cloud providers whose IPs
   often report a provider headquarters. Clustering nearby addresses helps, but a
   city label can still be wrong.
@@ -309,7 +327,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-1.0.4.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-1.0.5.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 

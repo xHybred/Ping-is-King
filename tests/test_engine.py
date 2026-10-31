@@ -1,6 +1,6 @@
 from cod_region_filter.catalog import Catalog, cidr_for
 from cod_region_filter.engine import MATCH_IDLE_END_S, MATCH_MIN_SECONDS, Engine
-from cod_region_filter.policy import AllowSpec, Policy, PolicyEngine, SoftMode
+from cod_region_filter.policy import AllowSpec, DenySpec, Policy, PolicyEngine, SoftMode
 
 
 def geo(city, region_code, lat, lon):
@@ -32,9 +32,64 @@ def setup(tmp_path, policy=None):
 
 
 def test_located_outside_allowlist_is_denied(tmp_path):
-    cat, eng = setup(tmp_path)
+    cat, eng = setup(tmp_path, Policy(allow=AllowSpec(regions=["US-OH"]), strict=True))
     verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=1000.0)
     assert verdict["allow"] is False
+    cat.close()
+
+
+def test_safe_scope_waits_for_session_before_dropping(tmp_path):
+    cat, eng = setup(tmp_path)
+    t = 1000.0
+    verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)
+    assert verdict["allow"] is True
+    assert verdict["kind"] == "grace"
+    for _ in range(5):
+        t += 0.1
+        eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)
+    verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=t + 0.1)
+    assert verdict["allow"] is True
+    for _ in range(6):
+        t += 0.1
+        verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)
+    assert verdict["allow"] is False
+    assert verdict["kind"] == "allowlist"
+    cat.close()
+
+
+def test_safe_scope_drops_known_server_range_after_a_few_packets(tmp_path):
+    cat = Catalog(tmp_path / "known.db")
+    cat.import_geo(
+        [{
+            "cidr": "198.51.100.0/24",
+            "city": "Los Angeles",
+            "region": "California",
+            "region_code": "CA",
+            "country": "United States",
+            "country_code": "US",
+            "lat": 34.05,
+            "lon": -118.24,
+        }],
+        "community_geo",
+        0.6,
+    )
+    eng = Engine(cat, PolicyEngine(Policy(allow=AllowSpec(regions=["US-OH"]))))
+    eng.policy.set_clusters(cat.clusters())
+    t = 1000.0
+    for _ in range(3):
+        assert eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)["allow"] is True
+        t += 0.05
+    verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)
+    assert verdict["allow"] is False
+    cat.close()
+
+
+def test_explicit_deny_applies_immediately_in_safe_scope(tmp_path):
+    policy = Policy(allow=AllowSpec(regions=["US-OH"]), deny=DenySpec(cidrs=["198.51.100.0/24"]))
+    cat, eng = setup(tmp_path, policy)
+    verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=1000.0)
+    assert verdict["allow"] is False
+    assert verdict["kind"] == "deny"
     cat.close()
 
 
@@ -107,6 +162,7 @@ def test_soft_mode_never_admits_located_denied_server(tmp_path):
         allow=AllowSpec(regions=["US-OH"]),
         unknown="deny",
         soft_mode=SoftMode(enabled=True, relax_after_s=20),
+        strict=True,
     )
     cat, eng = setup(tmp_path, policy)
     eng._searching_since = 0.0
@@ -137,6 +193,7 @@ def test_soft_mode_disabled_keeps_blocking(tmp_path):
         allow=AllowSpec(regions=["US-OH"]),
         unknown="deny",
         soft_mode=SoftMode(enabled=False),
+        strict=True,
     )
     cat, eng = setup(tmp_path, policy)
     eng._searching_since = 0.0
@@ -168,7 +225,7 @@ def test_soft_pin_holds_unclassified_endpoint_for_match(tmp_path):
 
 
 def test_state_reports_counters(tmp_path):
-    cat, eng = setup(tmp_path)
+    cat, eng = setup(tmp_path, Policy(allow=AllowSpec(regions=["US-OH"]), strict=True))
     eng.observe("203.0.113.10", 3074, "outbound", 200, now=1000.0)
     eng.observe("198.51.100.10", 3074, "outbound", 200, now=1000.0)
     state = eng.state()

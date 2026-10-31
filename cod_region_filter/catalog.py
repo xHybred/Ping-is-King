@@ -83,6 +83,12 @@ class RangeRecord:
     is_service: bool
     cluster: str
     region_key: str
+    source: str = "seed"
+
+    @property
+    def known_server(self) -> bool:
+        """True when a public CoD server list placed this range, not traffic we saw."""
+        return self.source in ("seed", "community_geo")
 
 
 class RangeIndex:
@@ -196,9 +202,9 @@ class Catalog:
 
     # -- observation -----------------------------------------------------
 
-    def observe(self, ip: str, size: int, rtt_ms: float | None = None) -> str:
+    def observe(self, ip: str, size: int, rtt_ms: float | None = None, cidr: str | None = None) -> str:
         """Buffer traffic for a remote IP and return its /24 cidr."""
-        cidr = cidr_for(ip)
+        cidr = cidr or cidr_for(ip)
         with self._lock:
             slot = self._pending.get(cidr)
             if slot is None:
@@ -341,7 +347,7 @@ class Catalog:
             if self._index_dirty:
                 rows = self._conn.execute(
                     "SELECT cidr, city, region, region_code, country, country_code, lat, lon, "
-                    "is_service FROM ranges"
+                    "is_service, source FROM ranges"
                 ).fetchall()
                 recs = [
                     RangeRecord(
@@ -356,6 +362,7 @@ class Catalog:
                         is_service=bool(r["is_service"]),
                         cluster=cluster_key(dict(r)),
                         region_key=region_key(dict(r)),
+                        source=r["source"],
                     )
                     for r in rows
                 ]
