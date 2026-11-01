@@ -22,6 +22,17 @@ def available() -> bool:
     return pydivert is not None
 
 
+def driver_problem(status: dict) -> str:
+    """Human-readable reason the packet driver cannot run, or "" when it is fine."""
+    if status.get("running"):
+        return ""
+    if not status.get("available", True):
+        return "The packet driver library is missing from this install. Reinstall the app."
+    if status.get("status") == "driver error":
+        return status.get("error") or "WinDivert could not start."
+    return ""
+
+
 class CaptureWorker(threading.Thread):
     def __init__(self, engine, log=None) -> None:
         super().__init__(name="capture", daemon=True)

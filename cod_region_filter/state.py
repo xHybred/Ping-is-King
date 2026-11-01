@@ -11,11 +11,11 @@ from pathlib import Path
 
 from . import catalog_update, games, geo, paths, policy as policy_mod, services, startup, titlebar
 from .catalog import Catalog, cidr_for
-from .capture import CaptureWorker, available as driver_available
+from .capture import CaptureWorker, available as driver_available, driver_problem
 from .engine import Engine
 from .policy import PolicyEngine, parse as parse_policy, dump as dump_policy
 
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.8"
 
 DEFAULT_CONFIG = {
     "filtering": True,
@@ -167,6 +167,23 @@ class AppState:
         self._tick_thread.start()
         if self.driver and self.elevated:
             self.capture.start()
+
+    def restart_capture(self) -> dict:
+        """Recreate the capture worker, e.g. after WinDivert was reinstalled."""
+        self.driver = driver_available()
+        if not self.driver:
+            return {
+                "ok": False,
+                "error": "The packet driver library is missing from this install. Reinstall the app.",
+            }
+        if not self.elevated:
+            return {"ok": False, "error": "Restart as administrator to use the packet driver."}
+        old = self.capture
+        old.stop()
+        old.join(timeout=2)
+        self.capture = CaptureWorker(self.engine, self.log)
+        self.capture.start()
+        return {"ok": True}
 
     def shutdown(self) -> None:
         with self._shutdown_lock:
@@ -392,6 +409,15 @@ class AppState:
 
         result = self.update_policy(mutate)
         result["cidr"] = cidr
+        if blocked and result.get("ok"):
+            ports = self.engine.platform_ports(ip)
+            if ports:
+                # The same address may carry lobby traffic; the scope guard
+                # only drops it while it is busy, so say that out loud.
+                result["warnings"] = list(result.get("warnings") or []) + [
+                    f"This address also uses port {ports[0]} for lobby traffic, "
+                    "so it is only blocked during a live session."
+                ]
         return result
 
     def set_radius(self, km: float) -> dict:
@@ -628,6 +654,7 @@ class AppState:
         game = games.find_game()
         self.game = game
         capture = self.capture.status
+        driver_error = driver_problem(capture)
         if not self.elevated:
             capture["status"] = "administrator required"
         elif not self.driver:
@@ -640,12 +667,17 @@ class AppState:
                 engine_state["current"]["cidr"] = "Hidden range"
             for verdict in engine_state.get("recent", []):
                 verdict["ip"] = "Hidden"
+            cancelled = engine_state.get("last_cancelled")
+            if cancelled:
+                cancelled["ip"] = "Hidden"
+                cancelled["cidr"] = "Hidden range"
         return {
             "state": engine_state,
             "game": game,
             "capture": capture,
             "elevated": self.elevated,
             "driver": self.driver,
+            "driver_error": driver_error,
             "policy_error": self.policy_error,
             "summary": self.policy_engine.summary(),
             "catalog_update": dict(self._catalog_update),
@@ -735,3 +767,4 @@ class AppState:
         self.catalog.reset()
         self.refresh_catalog()
         return {"ok": True}
+

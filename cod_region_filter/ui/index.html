@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COD Ping King</title>
-<link rel="stylesheet" href="styles.css?v=1.0.5">
+<link rel="stylesheet" href="styles.css?v=1.0.8">
 </head>
 <body>
 <div id="app">
@@ -59,7 +59,7 @@
         </div>
       </div>
       <div class="rail-meta">
-        <span id="rail-version">v1.0.5</span>
+        <span id="rail-version">v1.0.8</span>
         <button class="link" id="rail-pause">Pause</button>
       </div>
     </div>
@@ -87,12 +87,28 @@
       <button class="btn btn-small" id="elevate-btn">Restart as administrator</button>
     </div>
 
+    <div class="banner banner-warn" id="driver-banner" hidden>
+      <div>
+        <strong>Packet driver unavailable.</strong>
+        <span id="driver-banner-text">WinDivert could not start, so filtering is off.</span>
+      </div>
+      <button class="btn btn-small" id="driver-retry">Retry driver</button>
+    </div>
+
     <div class="banner banner-info" id="setup-banner" hidden>
       <div>
         <strong>Setup is not finished.</strong>
         <span>No regions are being enforced yet. Choose where you want to play.</span>
       </div>
       <button class="btn btn-small" id="setup-btn">Finish setup</button>
+    </div>
+
+    <div class="banner banner-warn" id="cancel-banner" hidden>
+      <div>
+        <strong>Match cancelled.</strong>
+        <span id="cancel-banner-text"></span>
+      </div>
+      <button class="btn btn-small" id="cancel-dismiss">Dismiss</button>
     </div>
 
     <div class="banner banner-info" id="soft-banner" hidden>
@@ -353,6 +369,13 @@
         <article class="card">
           <div class="card-head"><div><h2>Diagnostics</h2><p>Useful when asking for help.</p></div></div>
           <dl class="kv compact" id="diag-facts"></dl>
+          <div id="driver-error-wrap" hidden>
+            <h3>Driver error</h3>
+            <p class="hint" id="driver-error-text"></p>
+            <div class="button-row">
+              <button class="btn btn-small" id="copy-driver-error">Copy error</button>
+            </div>
+          </div>
           <h3>Recently blocked</h3>
           <p class="hint" id="blocked-empty">Nothing blocked in this session.</p>
           <div class="table-wrap" id="blocked-wrap" hidden>
@@ -489,7 +512,8 @@
 </div>
 
 <div class="toast-stack" id="toasts" aria-live="polite"></div>
-<script src="world.js?v=1.0.5"></script>
-<script src="app.js?v=1.0.5"></script>
+<script src="world.js?v=1.0.8"></script>
+<script src="app.js?v=1.0.8"></script>
 </body>
 </html>
+

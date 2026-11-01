@@ -110,7 +110,7 @@ def test_streamer_mode_hides_identifying_details(state):
     state.set_setting("streamer_mode", True)
     base = 1000.0
     for i in range(80):
-        state.engine.observe("45.63.1.10", 3074, "outbound", 200, now=base + i * 0.1)
+        state.engine.observe("45.63.1.10", 30000, "outbound", 200, now=base + i * 0.1)
     state.engine.tick(base + 8.0)
 
     boot = Api(state).bootstrap()

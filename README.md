@@ -51,7 +51,7 @@ relax the filter rather than leave you searching forever (this can be raised or 
 
 ## Install
 
-1. Download `COD-Ping-King-1.0.5.exe` from the releases page.
+1. Download `COD-Ping-King-1.0.8.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
@@ -164,17 +164,25 @@ Every UDP packet on the game's ports is checked in this order:
 5. **Radius** - clusters inside the circle around home.
 6. **Ping limit** - optional maximum estimated RTT.
 7. **Default** - allow or deny endpoints that are not in the catalog.
-8. **Scope** - safe scope only drops listed server ranges and flows that look
-   like a live session; strict drops anything the rules reject.
+8. **Scope** - safe scope drops listed server ranges at the first probe so the
+   game never selects them, waits for a session before dropping anything else,
+   and never treats platform traffic as a match. Strict drops anything the
+   rules reject.
 
 A denied outbound packet is dropped without a reset. The game sees a dead
 endpoint and picks another one, and the server is never told it was refused.
 
 Safe scope is the default because matchmaking, lobby and party traffic often
-lands on cloud addresses that no server list contains. It waits for a flow to
-look like a game session before dropping it, and always applies your explicit
-deny rules. Strict is there if you want the older behaviour and do not mind the
-occasional matchmaking failure.
+lands on cloud addresses that no server list contains, and because the game
+pings every candidate datacenter before it picks one. Ranges from the bundled
+server lists are dropped on the first probe, so a datacenter outside your
+regions never answers and never appears as a candidate. Endpoints the catalog
+has not located are only dropped once a flow is busy enough to be an actual
+session, so pixel-thin probes and lobby heartbeats get through. Flows on the
+game's own port (3074), Steam networking ports (27000-27050) and STUN ports
+(3478, 4379-4380) are treated as control traffic and never counted as a match.
+Your explicit deny rules still apply to them. Strict is there if you want the
+older behaviour and do not mind the occasional matchmaking failure.
 
 Auth, lobby, ownership and CDN addresses are resolved at launch and refreshed
 every ten minutes. If one is ever blocked, Diagnostics shows the endpoint and
@@ -241,8 +249,15 @@ endpoint. Game services are pinned at startup; if the host list could not be
 resolved (offline DNS, VPN), restart the app with the network connected. Do not
 add Demonware or CDN addresses to a deny list.
 
-**The installer cannot replace files.** The app is still running, maybe in the
-tray or under another user. Quit it first.
+**The installer cannot replace files.** Setup now stops the WinDivert driver
+service before copying and asks you to close a running window. If it still
+reports access denied on `WinDivert64.sys`, reboot and run it again; the driver
+stays loaded until the service is gone.
+
+**"Packet driver unavailable" banner.** Click **Retry driver** first. If that
+fails, the error text under **Diagnostics** names the reason; copy it when
+asking for help. Reinstalling fixes a missing driver file. Antivirus software
+that quarantines `WinDivert64.sys` also produces this.
 
 **Two tray icons, or Quit does nothing.** Fixed in 1.0.0: a single-instance mutex
 stops a second copy, and Quit exits on a separate thread so the tray menu cannot
@@ -253,10 +268,12 @@ block it. If an older build is still running, end it once from Task Manager.
 - **Modern Warfare 4 coverage is unverified.** Early sessions will contain
   endpoints the catalog has not located. Safe scope waits for a session before
   dropping those; strict mode blocks them from the first packet.
-- **Safe scope is a trade.** An uncatalogued server can receive a short burst of
-  traffic before it is dropped, and a brand-new server range may be allowed if it
-  never looks like a session. Strict mode avoids that at the cost of breaking
-  matchmaking when it meets an endpoint it does not recognise.
+- **Safe scope is a trade.** A server range that no public list contains can
+  still answer the matchmaking ping before it is dropped, so a join attempt may
+  fail before the game settles on an allowed server. A brand-new server range
+  may also be allowed if it never looks like a session. Strict mode avoids that
+  at the cost of breaking matchmaking when it meets an endpoint it does not
+  recognise.
 - **Geolocation is approximate.** Game servers run on cloud providers whose IPs
   often report a provider headquarters. Clustering nearby addresses helps, but a
   city label can still be wrong.
@@ -327,7 +344,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-1.0.5.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-1.0.8.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 
@@ -385,3 +402,4 @@ tools/         seed, geolocation and brand build scripts
 Not affiliated with or endorsed by Activision Publishing, Inc. Call of Duty is a
 trademark of Activision Publishing, Inc. This project ships no game assets and
 uses no Call of Duty logos.
+

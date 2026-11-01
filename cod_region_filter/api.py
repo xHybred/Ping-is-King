@@ -33,6 +33,7 @@ class Api:
             "version": APP_VERSION,
             "elevated": status["elevated"],
             "driver": status["driver"],
+            "driver_error": status["driver_error"],
             "game": status["game"],
             "config": self.state.config,
             "policy_text": "" if streamer else self.state.policy_text(),
@@ -58,6 +59,8 @@ class Api:
             "game": status["game"],
             "capture": status["capture"],
             "elevated": status["elevated"],
+            "driver": status["driver"],
+            "driver_error": status["driver_error"],
             "summary": status["summary"],
             "catalog_update": status["catalog_update"],
             "matches": self.state.matches_payload(10),
@@ -128,6 +131,9 @@ class Api:
 
     def set_filtering(self, on: bool) -> dict:
         return self.state.set_setting("filtering", bool(on))
+
+    def restart_capture(self) -> dict:
+        return self.state.restart_capture()
 
     def export_csv(self) -> dict:
         return self.state.export_csv()

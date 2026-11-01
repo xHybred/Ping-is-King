@@ -41,23 +41,43 @@ def test_located_outside_allowlist_is_denied(tmp_path):
 def test_safe_scope_waits_for_session_before_dropping(tmp_path):
     cat, eng = setup(tmp_path)
     t = 1000.0
-    verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)
+    verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=t)
     assert verdict["allow"] is True
     assert verdict["kind"] == "grace"
     for _ in range(5):
         t += 0.1
-        eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)
-    verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=t + 0.1)
+        eng.observe("198.51.100.10", 30000, "outbound", 200, now=t)
+    verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=t + 0.1)
     assert verdict["allow"] is True
     for _ in range(6):
         t += 0.1
-        verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)
+        verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=t)
     assert verdict["allow"] is False
     assert verdict["kind"] == "allowlist"
     cat.close()
 
 
-def test_safe_scope_drops_known_server_range_after_a_few_packets(tmp_path):
+def test_platform_port_traffic_is_never_dropped_while_idle(tmp_path):
+    cat, eng = setup(tmp_path)
+    verdict = eng.observe("198.51.100.10", 3074, "outbound", 60, now=1000.0)
+    assert verdict == {"allow": True, "reason": "Platform traffic", "kind": "platform"}
+    cat.close()
+
+
+def test_busy_platform_flow_is_not_a_match_and_stays_allowed(tmp_path):
+    policy = Policy(allow=AllowSpec(regions=["US-OH"]), unknown="deny")
+    cat, eng = setup(tmp_path, policy)
+    t = 1000.0
+    for _ in range(40):
+        verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)
+        t += 0.1
+    assert verdict["kind"] == "platform"
+    eng.tick(now=t)
+    assert eng.current_match() is None
+    cat.close()
+
+
+def test_known_server_range_is_dropped_on_the_first_probe(tmp_path):
     cat = Catalog(tmp_path / "known.db")
     cat.import_geo(
         [{
@@ -75,21 +95,37 @@ def test_safe_scope_drops_known_server_range_after_a_few_packets(tmp_path):
     )
     eng = Engine(cat, PolicyEngine(Policy(allow=AllowSpec(regions=["US-OH"]))))
     eng.policy.set_clusters(cat.clusters())
-    t = 1000.0
-    for _ in range(3):
-        assert eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)["allow"] is True
-        t += 0.05
-    verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=t)
+    # Steering happens at the probe: a listed datacenter never answers, so the
+    # game cannot select it and then get dropped out of a live match.
+    verdict = eng.observe("198.51.100.10", 30000, "outbound", 60, now=1000.0)
     assert verdict["allow"] is False
+    assert verdict["kind"] == "allowlist"
     cat.close()
 
 
 def test_explicit_deny_applies_immediately_in_safe_scope(tmp_path):
     policy = Policy(allow=AllowSpec(regions=["US-OH"]), deny=DenySpec(cidrs=["198.51.100.0/24"]))
     cat, eng = setup(tmp_path, policy)
-    verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=1000.0)
+    verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=1000.0)
     assert verdict["allow"] is False
     assert verdict["kind"] == "deny"
+    cat.close()
+
+
+def test_denied_short_match_is_reported_as_cancelled(tmp_path):
+    policy = Policy(allow=AllowSpec(regions=["US-OH"]), deny=DenySpec(cidrs=["198.51.100.0/24"]))
+    cat, eng = setup(tmp_path, policy)
+    t = 1000.0
+    for _ in range(80):
+        eng.observe("198.51.100.10", 30000, "outbound", 200, now=t)
+        t += 0.1
+    eng.tick(now=t)
+    assert eng.current_match() is not None
+    eng.tick(now=t + 16.0)
+    state = eng.state()
+    assert state["cancelled_total"] == 1
+    assert state["last_cancelled"]["cidr"] == "198.51.100.0/24"
+    assert state["last_cancelled"]["duration_s"] < 60
     cat.close()
 
 
@@ -123,8 +159,8 @@ def test_match_detection_records_best_flow(tmp_path):
     cat, eng = setup(tmp_path)
     t = 1000.0
     for _ in range(45):
-        eng.observe("203.0.113.10", 3074, "outbound", 200, now=t)
-        eng.observe("203.0.113.10", 3074, "inbound", 400, now=t + 0.02)
+        eng.observe("203.0.113.10", 30000, "outbound", 200, now=t)
+        eng.observe("203.0.113.10", 30000, "inbound", 400, now=t + 0.02)
         t += 0.1
     eng.tick(t + 0.6)
     assert eng.current_match() is not None
@@ -166,7 +202,7 @@ def test_soft_mode_never_admits_located_denied_server(tmp_path):
     )
     cat, eng = setup(tmp_path, policy)
     eng._searching_since = 0.0
-    verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=25.0)
+    verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=25.0)
     assert verdict["allow"] is False
     assert verdict["kind"] == "allowlist"
     assert eng.soft_active is False
@@ -181,7 +217,7 @@ def test_soft_mode_relaxes_after_timeout_for_unclassified(tmp_path):
     )
     cat, eng = setup(tmp_path, policy)
     eng._searching_since = 0.0
-    verdict = eng.observe("192.0.2.55", 3074, "outbound", 200, now=25.0)
+    verdict = eng.observe("192.0.2.55", 30000, "outbound", 200, now=25.0)
     assert verdict["allow"] is True
     assert verdict["kind"] == "soft"
     assert eng.soft_active is True
@@ -197,7 +233,7 @@ def test_soft_mode_disabled_keeps_blocking(tmp_path):
     )
     cat, eng = setup(tmp_path, policy)
     eng._searching_since = 0.0
-    verdict = eng.observe("192.0.2.55", 3074, "outbound", 200, now=1000.0)
+    verdict = eng.observe("192.0.2.55", 30000, "outbound", 200, now=1000.0)
     assert verdict["allow"] is False
     cat.close()
 
@@ -212,13 +248,13 @@ def test_soft_pin_holds_unclassified_endpoint_for_match(tmp_path):
     eng._searching_since = 0.0
     t = 25.0
     for _ in range(45):
-        eng.observe("192.0.2.55", 3074, "outbound", 200, now=t)
+        eng.observe("192.0.2.55", 30000, "outbound", 200, now=t)
         t += 0.1
     eng.tick(t + 0.6)
     assert eng.current_match() is not None
     assert eng.soft_active is False
     assert eng._soft_pinned_ip == "192.0.2.55"
-    verdict = eng.observe("192.0.2.55", 3074, "outbound", 200, now=t + 0.1)
+    verdict = eng.observe("192.0.2.55", 30000, "outbound", 200, now=t + 0.1)
     assert verdict["kind"] == "soft"
     assert verdict["allow"] is True
     cat.close()

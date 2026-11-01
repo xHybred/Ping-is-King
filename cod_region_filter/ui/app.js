@@ -28,6 +28,7 @@ let DEMO = DEMO_PARAM;
 const state = {
   boot: null,
   screen: "dashboard",
+  cancelDismissed: false,
   regionMode: "all",
   regionQuery: "",
   serverQuery: "",
@@ -283,6 +284,8 @@ const demo = (() => {
     allowed_packets: 148_233,
     denied_packets: 1_284,
     match_count: 6,
+    cancelled_total: 0,
+    last_cancelled: null,
     current,
     recent: [
       { ip: "198.51.100.19", port: 3074, reason: "Not in allowlist", at: "2026-10-30T17:05:12+00:00" },
@@ -358,9 +361,10 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "1.0.5",
+        version: "1.0.8",
         elevated: true,
         driver: true,
+        driver_error: "",
         game: {
           pid: 12844,
           name: "cod.exe",
@@ -416,6 +420,8 @@ soft_mode:
         game: { pid: 12844, name: "cod.exe", exe: "", match: "exact name" },
         capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [3074] },
         elevated: true,
+        driver: true,
+        driver_error: "",
         summary: summary(),
         catalog_update: { running: false, message: "", report: [], finished_at: 0 },
         matches: matchesPayload(),
@@ -476,6 +482,7 @@ soft_mode:
     set_unknown(mode) { policy.unknown = mode; return { ok: true }; },
     set_strict(on) { policy.strict = Boolean(on); return { ok: true }; },
     set_filtering(on) { stateObj.filtering = on; config.filtering = on; return { ok: true, config }; },
+    restart_capture() { return { ok: true }; },
     set_region_blocked(key, blocked) {
       const deny = new Set(policy.deny.regions);
       if (blocked) { deny.add(key); policy.allow.regions = policy.allow.regions.filter((k) => k !== key); }
@@ -554,10 +561,12 @@ function renderChrome(boot) {
   pill.classList.toggle("ok", Boolean(game));
   $("#game-pill-text").textContent = game ? `${game.name} running` : "Game not detected";
 
+  const driverError = boot.driver_error || (!boot.driver ? "The packet driver library is missing from this install." : "");
+
   if (!boot.elevated) {
     setStatus("warn", "Administrator required", "Catalog only, no blocking");
-  } else if (!boot.driver) {
-    setStatus("warn", "Driver not installed", "Install pydivert to filter");
+  } else if (driverError) {
+    setStatus("warn", "Driver error", "Filtering unavailable");
   } else if (!s.filtering) {
     setStatus("warn", "Filtering paused", "All servers reachable");
   } else if (game) {
@@ -566,7 +575,10 @@ function renderChrome(boot) {
     setStatus("ok", "Filtering on", "Waiting for game");
   }
 
-  $("#admin-banner").hidden = Boolean(boot.elevated && boot.driver);
+  $("#admin-banner").hidden = Boolean(boot.elevated);
+  $("#driver-banner").hidden = !boot.elevated || !driverError;
+  $("#driver-banner-text").textContent = driverError;
+  $("#driver-retry").hidden = !driverError;
   $("#setup-banner").hidden = !(boot.config && !boot.config.wizard_done) || CLEAN_PARAM;
   $("#policy-banner").hidden = !boot.policy_error;
   $("#policy-banner-text").textContent = boot.policy_error || "";
@@ -574,6 +586,17 @@ function renderChrome(boot) {
 
   $("#soft-banner").hidden = !s.soft_active;
   if (s.soft_active) $("#soft-banner-text").textContent = s.soft_reason;
+
+  const cancelled = s.last_cancelled;
+  const fresh = cancelled && Date.now() / 1000 - Number(cancelled.at || 0) < 600;
+  const showCancel = Boolean(cancelled) && fresh && !state.cancelDismissed;
+  $("#cancel-banner").hidden = !showCancel;
+  if (showCancel) {
+    const where = cancelled.city || "that server";
+    const howLong = cancelled.duration_s ? ` after ${fmtDuration(cancelled.duration_s)}` : "";
+    $("#cancel-banner-text").textContent =
+      `Left ${where}${howLong} because it is outside your regions. The game may drop you back to the menu.`;
+  }
 }
 
 function renderDashboard(boot) {
@@ -1031,10 +1054,11 @@ function renderSettings() {
   $("#update-catalog").disabled = Boolean(update.running);
 
   const capture = boot.capture || {};
+  const driverError = boot.driver_error || "";
   $("#app-facts").innerHTML = [
     ["Version", boot.version],
     ["Administrator", boot.elevated ? "Yes" : "No"],
-    ["Packet driver", boot.driver ? (capture.running ? "Running" : "Ready") : "Not installed"],
+    ["Packet driver", boot.driver ? (capture.running ? "Running" : "Ready") : "Unavailable"],
     [
       "Game",
       boot.game
@@ -1051,8 +1075,12 @@ function renderSettings() {
     ["Blocking scope", summary.strict ? "Strict" : "Safe"],
     ["Allowed / denied packets", `${st.allowed_packets || 0} / ${st.denied_packets || 0}`],
     ["Matches recorded", st.match_count || 0],
+    ["Matches cancelled", st.cancelled_total || 0],
     ["Driver status", capture.status || "unknown"],
   ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join("");
+
+  $("#driver-error-wrap").hidden = !driverError;
+  $("#driver-error-text").textContent = driverError;
 
   const recent = st.recent || [];
   $("#blocked-wrap").hidden = recent.length === 0;
@@ -1143,6 +1171,8 @@ async function poll() {
     state.boot.state = data.state;
     state.boot.game = data.game;
     state.boot.elevated = data.elevated;
+    state.boot.driver = data.driver;
+    state.boot.driver_error = data.driver_error;
     state.boot.summary = data.summary;
     state.boot.matches = data.matches;
     state.boot.regions = data.regions;
@@ -1163,6 +1193,7 @@ async function poll() {
       if (data.state.current) renderMap();
     }
     if (state.screen === "rules") renderPolicyFacts();
+    if (state.screen === "diagnostics") renderSettings();
   } catch (err) {
     /* polling errors are transient during shutdown */
   }
@@ -1310,6 +1341,11 @@ function bindEvents() {
     await call("set_soft_mode", false, 45);
     toast("Search guard disabled");
     await refresh();
+  });
+
+  $("#cancel-dismiss").addEventListener("click", () => {
+    state.cancelDismissed = true;
+    $("#cancel-banner").hidden = true;
   });
 
   $("#allow-region-btn").addEventListener("click", () => {
@@ -1633,6 +1669,7 @@ function bindEvents() {
       version: boot.version,
       elevated: boot.elevated,
       driver: boot.driver,
+      driver_error: boot.driver_error,
       game: boot.game,
       capture: boot.capture,
       summary: boot.summary,
@@ -1642,6 +1679,22 @@ function bindEvents() {
     toast(ok ? "Diagnostics copied" : "Could not access the clipboard", ok ? "ok" : "bad");
   });
   $("#open-log").addEventListener("click", () => call("open_folder", "log"));
+
+  $("#driver-retry").addEventListener("click", async () => {
+    const result = await call("restart_capture");
+    if (result && result.ok === false) {
+      toast(result.error || "Could not start the driver", "bad");
+      return;
+    }
+    toast("Driver restarted", "ok");
+    refresh();
+  });
+
+  $("#copy-driver-error").addEventListener("click", async () => {
+    const text = ($("#driver-error-text") || {}).textContent || "";
+    const ok = await copyText(text);
+    toast(ok ? "Error copied" : "Could not access the clipboard", ok ? "ok" : "bad");
+  });
 
   $("#quit-app").addEventListener("click", async () => {
     const yes = await confirmDialog(
@@ -1678,3 +1731,4 @@ function bindEvents() {
   await refresh();
   setInterval(poll, 2000);
 })();
+

@@ -16,12 +16,26 @@ MATCH_MIN_PACKETS = 40
 MATCH_IDLE_END_S = 15.0
 RTT_MAX_S = 0.5
 
-# Safe scope. A known server range is dropped once the flow has a few packets
-# so a matchmaking probe can still complete; anything else has to look like a
-# live session before it is dropped. Strict mode ignores both.
-KNOWN_DROP_PACKETS = 4
+# Safe scope. Nothing is dropped until a flow looks like a live session, so
+# matchmaking probes and lobby chatter still get through. Strict mode ignores
+# the gate.
 SESSION_MIN_PACKETS = 12
 SESSION_MIN_SECONDS = 0.8
+
+# Remote ports used for control traffic rather than a match: the game's own
+# port (Demonware lobby, party, matchmaking), Steam networking, and STUN for
+# voice. These are never treated as a match, so a busy lobby relay cannot be
+# mistaken for a server and dropped mid-queue.
+PLATFORM_PORTS = frozenset({3074, 3478, 4379, 4380})
+PLATFORM_PORT_RANGE = (27000, 27050)
+
+# A denied match that ends sooner than this was cancelled while joining, not
+# played. Worth telling the user about instead of silently returning to menu.
+CANCEL_NOTICE_S = 60
+
+
+def is_platform_port(port: int) -> bool:
+    return port in PLATFORM_PORTS or PLATFORM_PORT_RANGE[0] <= port <= PLATFORM_PORT_RANGE[1]
 
 
 def _iso(ts: float) -> str:
@@ -77,6 +91,8 @@ class Engine:
         self._recent_verdicts: deque[dict] = deque(maxlen=50)
         self._denial_log: dict[str, float] = {}
         self._match_count = 0
+        self._cancelled_total = 0
+        self._last_cancelled: dict | None = None
 
     # -- controls --------------------------------------------------------
 
@@ -161,7 +177,7 @@ class Engine:
             if not verdict["allow"] and verdict.get("kind") == "unknown" and self._soft_relaxed(now):
                 verdict = {"allow": True, "reason": "Soft mode", "kind": "soft"}
 
-            verdict = self._scope(flow, verdict, rec, now)
+            verdict = self._scope(flow, verdict, now, rec)
 
             flow.verdict = verdict
             if verdict["allow"]:
@@ -179,30 +195,39 @@ class Engine:
                 )
             return verdict
 
-    def _scope(self, flow: Flow, verdict: dict, rec, now: float) -> dict:
+    def _scope(self, flow: Flow, verdict: dict, now: float, rec) -> dict:
         """Keep automatic filtering away from endpoints that are not a session.
 
         Matchmaking, lobby and party traffic is short-lived and often lands on
         cloud ranges the server lists have never seen. Dropping those broke
-        matchmaking for some players, so safe scope waits for a flow to look
-        like a game session. Explicit rules (deny lists, per-match blocks)
-        always apply, and strict mode restores the old unconditional drop.
+        matchmaking for some players. Safe scope drops known server ranges at
+        the first packet so the game never selects a datacenter outside the
+        allowlist, and waits for a session before dropping anything else.
+        Explicit rules (deny lists, per-match blocks) always apply, and strict
+        mode restores the old unconditional drop.
         """
         if verdict["allow"] or self.policy.policy.strict:
             return verdict
         if verdict.get("kind") == "deny":
             return verdict
-        if rec is not None and rec.known_server:
-            if flow.packets >= KNOWN_DROP_PACKETS:
-                return verdict
-            return {"allow": True, "reason": "Settling in", "kind": "grace"}
+        if is_platform_port(flow.port):
+            return {"allow": True, "reason": "Platform traffic", "kind": "platform"}
         busy = (
             flow.packets >= SESSION_MIN_PACKETS
             and now - flow.first_seen >= SESSION_MIN_SECONDS
         )
         if busy:
             return verdict
+        if rec is not None and rec.known_server:
+            return verdict
         return {"allow": True, "reason": "Not a game session yet", "kind": "grace"}
+
+    def platform_ports(self, ip: str) -> list[int]:
+        """Platform ports this endpoint has used, for block confirmations."""
+        with self._lock:
+            return sorted(
+                {port for (flow_ip, port) in self._flows if flow_ip == ip and is_platform_port(port)}
+            )
 
     def _log_denial(self, ip: str, port: int, verdict: dict, now: float) -> None:
         last = self._denial_log.get(ip)
@@ -245,6 +270,8 @@ class Engine:
         for flow in self._flows.values():
             if now - flow.last_seen > 3.0:
                 continue
+            if is_platform_port(flow.port):
+                continue
             if flow.first_seen and now - flow.first_seen < MATCH_MIN_SECONDS:
                 continue
             if flow.packets < MATCH_MIN_PACKETS:
@@ -277,6 +304,18 @@ class Engine:
             "reason": flow.verdict.get("reason", ""),
         }
         self.catalog.record_match(match)
+        if not match["allowed"] and match["duration_s"] < CANCEL_NOTICE_S:
+            self._cancelled_total += 1
+            self._last_cancelled = {
+                "ip": match["remote_ip"],
+                "cidr": match["cidr"],
+                "city": match["city"],
+                "region": match["region"],
+                "country": match["country"],
+                "duration_s": match["duration_s"],
+                "reason": match["reason"],
+                "at": time.time(),
+            }
         self._recent_verdicts.appendleft(
             {
                 "ip": flow.ip,
@@ -333,6 +372,8 @@ class Engine:
             "allowed_packets": self._allowed_total,
             "denied_packets": self._denied_total,
             "match_count": self._match_count,
+            "cancelled_total": self._cancelled_total,
+            "last_cancelled": dict(self._last_cancelled) if self._last_cancelled else None,
             "current": self.current_match(),
             "recent": list(self._recent_verdicts)[:20],
         }
