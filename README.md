@@ -487,6 +487,18 @@ tests/         unit tests
 tools/         seed, geolocation and brand build scripts
 ```
 
+## Socials & Donations
+
+[Discord](https://discord.com/invite/dc74er8TJF) - [YouTube](https://www.youtube.com/c/Hybred) - [Twitter/X](https://x.com/TheHybred)
+
+This tool is free and always will be. If it saves you time, you can help cover the hardware, tools and games used for testing:
+
+<p align="center">
+  <a href="https://www.patreon.com/c/Hybred"><img src="docs/brand/donate-patreon.png" alt="Support on Patreon" height="52"></a>
+  &nbsp;&nbsp;
+  <a href="https://ko-fi.com/hybred"><img src="docs/brand/donate-kofi.png" alt="Buy me a Ko-fi" height="52"></a>
+</p>
+
 ## Trademark
 
 Not affiliated with or endorsed by Activision Publishing, Inc. Call of Duty is a
