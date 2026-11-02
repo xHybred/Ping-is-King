@@ -1,8 +1,8 @@
-﻿; Inno Setup script. Run after pyinstaller packaging/build.spec.
+; Inno Setup script. Run after pyinstaller packaging/build.spec.
 ;   iscc packaging\installer.iss
 
 #define AppName "COD Ping King"
-#define AppVersion "1.0.11"
+#define AppVersion "1.3.4"
 #define AppExe "CODPingKing.exe"
 
 ; Override with iscc /DDistDir=..\dist-next when the default build is locked by a running copy.
@@ -31,7 +31,7 @@ CloseApplications=yes
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExe}
 UsePreviousAppDir=no
-VersionInfoVersion=1.0.11.0
+VersionInfoVersion=1.3.4.0
 VersionInfoDescription={#AppName} setup
 
 [InstallDelete]
@@ -105,4 +105,6 @@ begin
     end;
   end;
 end;
+
+
 

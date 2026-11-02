@@ -138,3 +138,14 @@ def test_theme_names_accept_legacy_values(state):
     assert state.set_theme("onyx")["ok"] is True
     assert state.config["theme"] == "onyx"
     assert state.set_theme("dark")["ok"] is False
+
+
+def test_provider_rule_moves_between_lists_and_normalises(state):
+    assert state.set_provider_rule("AS20473", "allow")["ok"] is True
+    assert state.policy_engine.policy.allow.providers == ["Vultr"]
+    assert state.set_provider_rule("Vultr", "deny")["ok"] is True
+    assert state.policy_engine.policy.allow.providers == []
+    assert state.policy_engine.policy.deny.providers == ["Vultr"]
+    assert state.set_provider_rule("Vultr", "none")["ok"] is True
+    assert state.policy_engine.policy.deny.providers == []
+    assert state.set_provider_rule("Vultr", "bogus")["ok"] is False

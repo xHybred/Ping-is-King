@@ -8,7 +8,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from .catalog import Catalog, cidr_for
+from .catalog import Catalog, cidr_for, provider_label
 from .policy import PolicyEngine
 
 MATCH_MIN_SECONDS = 5.0
@@ -25,13 +25,19 @@ SESSION_MIN_SECONDS = 0.8
 # Remote ports used for control traffic rather than a match: the game's own
 # port (Demonware lobby, party, matchmaking), Steam networking, and STUN for
 # voice. These are never treated as a match, so a busy lobby relay cannot be
-# mistaken for a server and dropped mid-queue.
+# mistaken for a server and dropped mid-queue. The upper bound is above Steam's
+# documented 27050 because its datagram relays answer on 27051-27139, and
+# dropping those leaves the game on "Waiting for relay".
 PLATFORM_PORTS = frozenset({3074, 3478, 4379, 4380})
-PLATFORM_PORT_RANGE = (27000, 27050)
+PLATFORM_PORT_RANGE = (27000, 27199)
 
 # A denied match that ends sooner than this was cancelled while joining, not
 # played. Worth telling the user about instead of silently returning to menu.
 CANCEL_NOTICE_S = 60
+
+# Quiet this long and the next packet counts as a new search rather than a
+# continuation of an old one.
+IDLE_RESET_S = 60.0
 
 
 def is_platform_port(port: int) -> bool:
@@ -95,6 +101,9 @@ class Engine:
         self._match_count = 0
         self._cancelled_total = 0
         self._last_cancelled: dict | None = None
+        self._scan_start = 0.0
+        self._scan_count = 0
+        self._last_activity = 0.0
 
     # -- controls --------------------------------------------------------
 
@@ -128,7 +137,29 @@ class Engine:
             return False
         self._soft_active = True
         self._soft_reason = f"No match for {p.soft_mode.relax_after_s}s; unclassified endpoints allowed"
+        self.log(f"search guard: {self._soft_reason}")
         return True
+
+    def _touch_activity(self, now: float) -> None:
+        """Restart the search guard after the game has been quiet for a while.
+
+        The timer starts when filtering starts, so an app left open while the
+        player sits in the menu used to count as a fruitless search and relax
+        before the first queue.
+        """
+        if (
+            self._filtering
+            and self._current is None
+            and self._last_activity
+            and now - self._last_activity > IDLE_RESET_S
+        ):
+            if self._soft_active or self._searching_since is not None:
+                self.log("search guard: idle, timer restarted")
+            self._searching_since = now
+            self._soft_active = False
+            self._soft_pinned_ip = None
+            self._soft_reason = ""
+        self._last_activity = now
 
     # -- packet path -----------------------------------------------------
 
@@ -162,6 +193,7 @@ class Engine:
         """
         now = now if now is not None else time.monotonic()
         with self._lock:
+            self._touch_activity(now)
             key = (ip, port)
             flow = self._flows.get(key)
             if flow is None:
@@ -214,7 +246,7 @@ class Engine:
                 self._allowed_total += 1
             else:
                 self._denied_total += 1
-                self._log_denial(ip, port, verdict, now)
+                self._log_denial(ip, port, verdict, now, flow)
                 self._recent_verdicts.appendleft(
                     {
                         "ip": ip,
@@ -225,32 +257,72 @@ class Engine:
                 )
             return verdict
 
+    def observe_inbound(self, ip: str, port: int, size: int, packets: int = 1, now: float | None = None) -> None:
+        """Record sniffed inbound traffic without deciding anything.
+
+        Called from the sniffer thread for every sampled copy. Running the full
+        verdict path here competes with outbound re-injection for the engine
+        lock and the GIL, which is what made some players rubber-band.
+        """
+        now = now if now is not None else time.monotonic()
+        with self._lock:
+            self._touch_activity(now)
+            key = (ip, port)
+            flow = self._flows.get(key)
+            if flow is None:
+                flow = self._flows[key] = Flow(
+                    ip=ip, port=port, first_seen=now, last_seen=now, cidr=cidr_for(ip)
+                )
+            flow.last_seen = now
+            flow.packets += packets
+            flow.bytes += size
+            flow.inbound += packets
+            flow.last_in = now
+
+            rtt_sample = None
+            if flow.last_out is not None:
+                gap = now - flow.last_out
+                if 0 < gap <= RTT_MAX_S:
+                    flow.rtt_samples.append(gap)
+                    rtt_sample = gap * 1000
+
+            self.catalog.observe(ip, size, rtt_sample, cidr=flow.cidr)
+
     def _scope(self, flow: Flow, verdict: dict, now: float, rec) -> dict:
         """Keep automatic filtering away from endpoints that are not a session.
 
         Matchmaking, lobby and party traffic is short-lived and often lands on
         cloud ranges the server lists have never seen. Dropping those broke
-        matchmaking for some players. Safe scope drops known server ranges at
-        the first packet so the game never selects a datacenter outside the
-        allowlist, and waits for a session before dropping anything else.
+        matchmaking for some players, so an endpoint we cannot place gets a
+        short grace window. Once we do know where it is, the policy applies on
+        the first packet; letting a located, denied server run for a second was
+        long enough for the game to commit and load the map.
         Explicit rules (deny lists, per-match blocks) always apply, and strict
         mode restores the old unconditional drop.
         """
-        if verdict["allow"] or self.policy.policy.strict:
+        if verdict["allow"]:
             return verdict
         if verdict.get("kind") == "deny":
             return verdict
-        if is_platform_port(flow.port) and not (rec is not None and rec.known_server):
-            # Lobby and relay traffic shares these ports with match servers, so
-            # only endpoints the server lists do not name get the free pass.
+        if not self.policy.policy.strict and is_platform_port(flow.port):
+            # Lobby, party and voice traffic shares these ports with match
+            # servers. Dropping an idle heartbeat here breaks matchmaking, and
+            # in practice the 3074 servers outside the allowlist were control
+            # traffic, not matches. A match server on 3074 can still be blocked
+            # from its row in Recent matches, which writes an explicit deny.
+            # Provider rules land above as kind "provider", not "deny", so a
+            # host block cannot strand relay traffic. Strict keeps the old
+            # behaviour and drops platform traffic with everything else.
             return {"allow": True, "reason": "Platform traffic", "kind": "platform"}
+        if self.policy.policy.strict:
+            return verdict
+        if rec is not None and (rec.city or rec.known_server):
+            return verdict
         busy = (
             flow.packets >= SESSION_MIN_PACKETS
             and now - flow.first_seen >= SESSION_MIN_SECONDS
         )
         if busy:
-            return verdict
-        if rec is not None and rec.known_server:
             return verdict
         return {"allow": True, "reason": "Not a game session yet", "kind": "grace"}
 
@@ -261,14 +333,27 @@ class Engine:
                 {port for (flow_ip, port) in self._flows if flow_ip == ip and is_platform_port(port)}
             )
 
-    def _log_denial(self, ip: str, port: int, verdict: dict, now: float) -> None:
+    def _log_denial(self, ip: str, port: int, verdict: dict, now: float, flow: Flow) -> None:
         last = self._denial_log.get(ip)
         if last is not None and now - last < 60.0:
             return
         if len(self._denial_log) > 512:
             self._denial_log.clear()
         self._denial_log[ip] = now
-        self.log(f"blocked {ip}:{port} ({verdict['reason']})")
+        elapsed = max(now - flow.first_seen, 0.001)
+        rate = flow.packets / elapsed
+        self.log(
+            f"blocked {ip}:{port} ({verdict['reason']}, {verdict.get('kind', '?')}, "
+            f"{flow.packets} pkts, {rate:.0f}/s)"
+        )
+        if now - self._scan_start > 2.0:
+            self._scan_start = now
+            self._scan_count = 0
+        self._scan_count += 1
+        if self._scan_count == 10:
+            # A queue scan rejects dozens of datacenters in a second; say so
+            # once instead of leaving a reader to count the lines.
+            self.log("blocked 10 endpoints in under 2s (matchmaking scan)")
 
     # -- match detection -------------------------------------------------
 
@@ -281,6 +366,10 @@ class Engine:
                 if self._current is None:
                     self._current = candidate
                     self._current_started = candidate.first_seen
+                    self.log(
+                        f"match start {candidate.ip}:{candidate.port} "
+                        f"({self._describe(candidate.ip)})"
+                    )
                     if self._soft_active:
                         self._soft_pinned_ip = candidate.ip
                     self._soft_active = False
@@ -291,6 +380,10 @@ class Engine:
                         self._finish_match(now)
                         self._current = candidate
                         self._current_started = candidate.first_seen
+                        self.log(
+                            f"match start {candidate.ip}:{candidate.port} "
+                            f"({self._describe(candidate.ip)})"
+                        )
             elif self._current is not None and now - self._current.last_seen > MATCH_IDLE_END_S:
                 self._finish_match(now)
 
@@ -315,6 +408,12 @@ class Engine:
                 best = flow
         return best
 
+    def _describe(self, ip: str) -> str:
+        rec = self.catalog.index().find(ip)
+        if rec is None or not rec.city:
+            return "unclassified"
+        return ", ".join(part for part in (rec.city, rec.region) if part)
+
     def _finish_match(self, now: float) -> None:
         flow = self._current
         self._current = None
@@ -336,6 +435,11 @@ class Engine:
             "reason": flow.verdict.get("reason", ""),
         }
         self.catalog.record_match(match)
+        self.log(
+            f"match end {match['remote_ip']}:{flow.port} ({self._describe(flow.ip)}) "
+            f"after {match['duration_s']}s allowed={str(match['allowed']).lower()} "
+            f"({match['reason']})"
+        )
         if not match["allowed"] and match["duration_s"] < CANCEL_NOTICE_S:
             self._cancelled_total += 1
             self._last_cancelled = {
@@ -385,11 +489,14 @@ class Engine:
                 "region": rec.region if rec else "",
                 "region_key": rec.region_key if rec else "",
                 "country": rec.country if rec else "",
+                "provider": provider_label(rec.provider, rec.asn) if rec else "",
+                "asn": rec.asn if rec else 0,
                 "duration_s": int(time.monotonic() - self._current_started),
                 "bytes": flow.bytes,
                 "rtt_ms": round(rtt) if rtt else None,
                 "allowed": bool(flow.verdict.get("allow", True)),
                 "reason": flow.verdict.get("reason", ""),
+                "rule_kind": flow.verdict.get("kind", ""),
             }
 
     def state(self) -> dict:

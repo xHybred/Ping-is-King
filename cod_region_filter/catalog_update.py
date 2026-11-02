@@ -129,12 +129,17 @@ def parse_geo_list(payload: bytes) -> list[dict]:
         lat, lon = row.get("latitude"), row.get("longitude")
         if lat is None or lon is None:
             continue
-        key = (city, subdivision, country, cc, round(float(lat), 3), round(float(lon), 3))
+        provider = (row.get("asn_org") or "").strip()
+        asn = row.get("asn") or 0
+        key = (
+            city, subdivision, country, cc, round(float(lat), 3), round(float(lon), 3),
+            provider, asn,
+        )
         per_range.setdefault(_cidr(ip), Counter())[key] += 1
 
     records = []
     for cidr, votes in per_range.items():
-        (city, subdivision, country, cc, lat, lon), _ = votes.most_common(1)[0]
+        (city, subdivision, country, cc, lat, lon, provider, asn), _ = votes.most_common(1)[0]
         records.append(
             {
                 "cidr": cidr,
@@ -145,6 +150,8 @@ def parse_geo_list(payload: bytes) -> list[dict]:
                 "country_code": cc,
                 "lat": lat,
                 "lon": lon,
+                "asn": asn,
+                "provider": provider,
             }
         )
     return records

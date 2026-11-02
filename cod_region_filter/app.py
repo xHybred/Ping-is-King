@@ -18,6 +18,7 @@ import webbrowser
 from pathlib import Path
 
 from . import paths
+from . import hotkey as hotkey_mod
 from .titlebar import TITLE as WINDOW_TITLE, apply as apply_titlebar
 
 MUTEX_NAME = "Local\\CODPingKing.SingleInstance"
@@ -149,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
 
     def on_closed() -> None:
         state.shutdown()
+        if hotkey_ctl is not None:
+            hotkey_ctl.stop()
         if tray_ctl is not None:
             tray_ctl.stop()
         log.info("window closed")
@@ -190,6 +193,14 @@ def main(argv: list[str] | None = None) -> int:
             filtering=bool(state.config.get("filtering", True)),
         )
 
+    hotkey_ctl = None
+    if os.name == "nt":
+        hotkey_ctl = hotkey_mod.Hotkey(
+            lambda: toggle_filtering(not state.engine.filtering),
+            log=log.info,
+        )
+        hotkey_ctl.start()
+
     def on_closing():
         if quitting:
             return True
@@ -212,6 +223,8 @@ def main(argv: list[str] | None = None) -> int:
         webview.start(func=after_start, debug=args.debug)
     finally:
         state.shutdown()
+        if hotkey_ctl is not None:
+            hotkey_ctl.stop()
         if tray_ctl is not None:
             tray_ctl.stop()
     return 0

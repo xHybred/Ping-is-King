@@ -150,6 +150,33 @@ def test_record_and_read_matches(tmp_path):
     cat.close()
 
 
+def test_a_range_that_hosted_a_match_becomes_a_known_server(tmp_path):
+    cat = Catalog(tmp_path / "catalog.db")
+    cat.observe("203.0.113.10", 400)
+    cat.flush()
+    assert cat.index().find("203.0.113.10").known_server is False
+    cat.record_match(
+        {
+            "remote_ip": "203.0.113.10",
+            "cidr": "203.0.113.0/24",
+            "city": "Columbus",
+            "region": "Ohio",
+            "country": "United States",
+            "started_at": "2026-01-01T00:00:00+00:00",
+            "ended_at": "2026-01-01T00:01:00+00:00",
+            "duration_s": 60,
+            "bytes": 5000,
+            "rtt_ms": 22,
+            "allowed": False,
+            "reason": "Not in allowlist",
+        }
+    )
+    rec = cat.index().find("203.0.113.10")
+    assert rec.match_server == 1
+    assert rec.known_server is True
+    cat.close()
+
+
 def test_stats_and_export(tmp_path):
     cat = Catalog(tmp_path / "catalog.db")
     cat.observe("203.0.113.10", 300)
@@ -189,3 +216,106 @@ def test_seed_includes_bundled_community_list(tmp_path):
     assert row is not None
     assert row.city == target["city"]
     catalog.close()
+
+
+def test_seed_community_carries_provider_data(tmp_path):
+    catalog = Catalog(tmp_path / "catalog.db")
+    catalog.seed()
+    providers = catalog.providers()
+    names = {p["provider"] for p in providers["providers"]}
+    assert {"Google Cloud", "Microsoft Azure", "Vultr"} <= names
+    assert any(p["asn"] for p in providers["providers"])
+    top = providers["providers"][:3]
+    total = sum(p["servers"] for p in providers["providers"])
+    assert sum(p["servers"] for p in top) > total * 0.8
+    catalog.close()
+
+
+def test_import_geo_fills_provider_on_an_existing_range(tmp_path):
+    catalog = Catalog(tmp_path / "catalog.db")
+    catalog.observe("45.63.9.9", 1200, 30.0)
+    catalog.flush()
+    catalog.import_geo(
+        [{
+            "cidr": "45.63.9.0/24",
+            "city": "Atlanta",
+            "region": "Georgia",
+            "region_code": "GA",
+            "country": "United States",
+            "country_code": "US",
+            "lat": 33.75,
+            "lon": -84.39,
+            "asn": "AS20473",
+            "provider": "The Constant Company, LLC",
+        }],
+        "community_geo",
+        0.55,
+    )
+    row = catalog.servers("45.63.9")[0]
+    assert row["provider"] == "The Constant Company, LLC"
+    assert row["asn"] == 20473
+    listed = catalog.providers()["providers"][0]
+    assert listed["servers"] == 1
+    assert listed["regions"] == 1
+    catalog.close()
+
+
+def test_catalog_created_before_provider_columns_is_migrated(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "catalog.db"
+    old = sqlite3.connect(path)
+    old.executescript(
+        "CREATE TABLE ranges (cidr TEXT PRIMARY KEY, city TEXT NOT NULL DEFAULT '',"
+        " region TEXT NOT NULL DEFAULT '', region_code TEXT NOT NULL DEFAULT '',"
+        " country TEXT NOT NULL DEFAULT '', country_code TEXT NOT NULL DEFAULT '',"
+        " lat REAL, lon REAL, source TEXT NOT NULL DEFAULT 'observed',"
+        " confidence REAL NOT NULL DEFAULT 0.5, is_service INTEGER NOT NULL DEFAULT 0,"
+        " packets INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0,"
+        " rtt_ms REAL, first_seen TEXT NOT NULL, last_seen TEXT NOT NULL);"
+        "INSERT INTO ranges (cidr, city, first_seen, last_seen)"
+        " VALUES ('45.63.9.0/24', 'Atlanta', 'now', 'now');"
+    )
+    old.commit()
+    old.close()
+
+    catalog = Catalog(path)
+    columns = {row["name"] for row in catalog._conn.execute("PRAGMA table_info(ranges)")}
+    assert {"asn", "provider"} <= columns
+    assert catalog.servers()[0]["city"] == "Atlanta"
+    catalog.close()
+
+
+def test_traffic_flush_does_not_invalidate_the_index(tmp_path):
+    cat = Catalog(tmp_path / "catalog.db")
+    cat.observe("45.63.9.9", 500)
+    cat.flush()
+    version = cat.version
+    cat.observe("45.63.9.9", 700)
+    cat.flush()
+    assert cat.version == version
+    cat.close()
+
+
+def test_new_observed_range_reaches_the_index(tmp_path):
+    cat = Catalog(tmp_path / "catalog.db")
+    cat.observe("45.63.9.9", 500)
+    cat.flush()
+    found = cat.index().find("45.63.9.9")
+    assert found is not None
+    assert found.cidr == "45.63.9.0/24"
+    cat.close()
+
+
+def test_resolve_location_touches_only_its_own_range(tmp_path):
+    cat = Catalog(tmp_path / "catalog.db")
+    cat.observe("45.63.9.9", 500)
+    cat.observe("66.42.94.9", 500)
+    cat.flush()
+    version = cat.version
+    cat.resolve_location("45.63.9.0/24", location("Atlanta", "GA", 33.75, -84.39))
+    assert cat.version == version + 1
+    index = cat.index()
+    assert index.find("45.63.9.9").city == "Atlanta"
+    assert index.find("66.42.94.9").city == ""
+    cat.close()

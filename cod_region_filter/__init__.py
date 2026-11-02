@@ -1,4 +1,6 @@
-﻿"""COD Ping King - packet-level server region control for Call of Duty."""
+"""COD Ping King - packet-level server region control for Call of Duty."""
 
-__version__ = "1.0.11"
+__version__ = "1.3.4"
+
+
 

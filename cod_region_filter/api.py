@@ -49,6 +49,7 @@ class Api:
             "regions": self.state.regions_payload(),
             "clusters": self.state.clusters_payload(),
             "servers": self.state.servers_payload(limit=200),
+            "providers": self.state.providers_payload(),
             "paths": shown_paths,
         }
 
@@ -129,6 +130,9 @@ class Api:
     def set_strict(self, enabled: bool) -> dict:
         return self.state.set_strict(enabled)
 
+    def set_provider_rule(self, provider: str, rule: str) -> dict:
+        return self.state.set_provider_rule(provider, rule)
+
     def set_filtering(self, on: bool) -> dict:
         return self.state.set_setting("filtering", bool(on))
 
@@ -146,6 +150,9 @@ class Api:
 
     def export_policy(self) -> dict:
         return self.state.export_policy()
+
+    def export_diagnostics(self, text: str) -> dict:
+        return self.state.export_diagnostics(text)
 
     def reset_catalog(self) -> dict:
         return self.state.reset_catalog()

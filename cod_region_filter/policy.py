@@ -8,14 +8,11 @@ from typing import Iterable
 
 import yaml
 
-from .catalog import cidr_for
+from .catalog import cidr_for, provider_label
 
 MODES = ("allowlist", "blocklist")
 UNKNOWN_CHOICES = ("allow", "deny")
-
-
-class PolicyError(ValueError):
-    pass
+PROVIDER_RULES = ("none", "allow", "deny")
 
 
 @dataclass
@@ -24,6 +21,7 @@ class AllowSpec:
     clusters: list[str] = field(default_factory=list)
     countries: list[str] = field(default_factory=list)
     pins: list[str] = field(default_factory=list)
+    providers: list[str] = field(default_factory=list)
     radius_km: float = 0.0
 
 
@@ -33,6 +31,7 @@ class DenySpec:
     clusters: list[str] = field(default_factory=list)
     countries: list[str] = field(default_factory=list)
     cidrs: list[str] = field(default_factory=list)
+    providers: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -120,6 +119,7 @@ def parse(text: str) -> tuple[Policy | None, list[str]]:
     policy.allow.clusters = _str_list(allow.get("clusters"), "allow.clusters", errors)
     policy.allow.countries = [c.upper() for c in _str_list(allow.get("countries"), "allow.countries", errors)]
     policy.allow.pins = _str_list(allow.get("pins"), "allow.pins", errors)
+    policy.allow.providers = _str_list(allow.get("providers"), "allow.providers", errors)
     try:
         policy.allow.radius_km = float(allow.get("radius_km", 0) or 0)
         if policy.allow.radius_km < 0:
@@ -133,6 +133,7 @@ def parse(text: str) -> tuple[Policy | None, list[str]]:
     policy.deny.clusters = _str_list(deny.get("clusters"), "deny.clusters", errors)
     policy.deny.countries = [c.upper() for c in _str_list(deny.get("countries"), "deny.countries", errors)]
     policy.deny.cidrs = _str_list(deny.get("cidrs"), "deny.cidrs", errors)
+    policy.deny.providers = _str_list(deny.get("providers"), "deny.providers", errors)
 
     try:
         policy.max_rtt_ms = int(raw.get("max_rtt_ms", 0) or 0)
@@ -173,12 +174,14 @@ def dump(policy: Policy) -> str:
             "countries": sorted(policy.allow.countries),
             "radius_km": policy.allow.radius_km,
             "pins": sorted(policy.allow.pins),
+            "providers": sorted(policy.allow.providers),
         },
         "deny": {
             "regions": sorted(policy.deny.regions),
             "clusters": sorted(policy.deny.clusters),
             "countries": sorted(policy.deny.countries),
             "cidrs": sorted(policy.deny.cidrs),
+            "providers": sorted(policy.deny.providers),
         },
         "max_rtt_ms": policy.max_rtt_ms,
         "soft_mode": {
@@ -191,6 +194,7 @@ def dump(policy: Policy) -> str:
         "# mode: allowlist blocks every located server that is not allowed below.\n"
         "# unknown: what to do with endpoints the catalog has not located yet.\n"
         "# strict: true drops every located endpoint; false drops listed servers and busy sessions only.\n"
+        "# providers: names from the Providers card. A deny wins over an allow.\n"
         "# Edits apply immediately; the app validates and rejects broken files.\n"
     )
     return header + yaml.safe_dump(data, sort_keys=False, default_flow_style=False)
@@ -205,6 +209,13 @@ def lint(p: Policy) -> list[str]:
         warnings.append("No regions are allowed. Every located server will be blocked.")
     if p.allow.radius_km and p.home_lat is None:
         warnings.append("Radius is set but no home location is known.")
+    if p.allow.providers and p.mode != "allowlist":
+        warnings.append("Provider allow rules only apply in allowlist mode.")
+    overlap = {provider_label(x) for x in p.allow.providers} & {
+        provider_label(x) for x in p.deny.providers
+    }
+    if overlap:
+        warnings.append(f"Provider both allowed and blocked: {', '.join(sorted(overlap))}. Block wins.")
     return warnings
 
 
@@ -224,6 +235,8 @@ class PolicyEngine:
         self._allowed: set[str] = set()
         self._denied: set[str] = set()
         self._pins: set[str] = set()
+        self._provider_allow: set[str] = set()
+        self._provider_deny: set[str] = set()
         self._service_ips: set[str] = set()
 
     def set_service_ips(self, ips: list[str]) -> None:
@@ -254,6 +267,8 @@ class PolicyEngine:
         self._allowed = set(p.allow.clusters) | self._radius_keys
         self._denied = set(p.deny.clusters)
         self._pins = set()
+        self._provider_allow = {provider_label(name) for name in p.allow.providers}
+        self._provider_deny = {provider_label(name) for name in p.deny.providers}
 
     def _allow_match(self, cluster: dict | None, rec) -> str | None:
         if cluster is None:
@@ -295,8 +310,25 @@ class PolicyEngine:
         if rec is not None and cluster is not None and cluster.get("country_code") in p.deny.countries:
             return {"allow": False, "reason": f"Denied country {cluster['country_code']}", "kind": "deny"}
 
+        provider = provider_label(getattr(rec, "provider", ""), getattr(rec, "asn", 0)) if rec is not None else ""
+        if provider and provider in self._provider_deny:
+            return {"allow": False, "reason": f"Provider {provider} blocked", "kind": "provider"}
+
         allowed_by = self._allow_match(cluster, rec)
         if allowed_by:
+            # A provider allow list narrows the regions you already allowed; it
+            # never widens them. An unlabelled range passes because the name is
+            # missing, not because the host was rejected.
+            pinned = rec is not None and rec.cidr in p.allow.pins
+            if (
+                not pinned
+                and allowed_by != "pin"
+                and p.mode == "allowlist"
+                and self._provider_allow
+                and provider
+                and provider not in self._provider_allow
+            ):
+                return {"allow": False, "reason": f"Provider {provider} not allowed", "kind": "provider"}
             return {"allow": True, "reason": f"Allowed by {allowed_by}", "kind": allowed_by}
 
         if p.max_rtt_ms and cluster is not None and cluster.get("avg_rtt_ms"):
@@ -352,6 +384,7 @@ class PolicyEngine:
                 "clusters": sorted(p.allow.clusters),
                 "countries": sorted(p.allow.countries),
                 "pins": sorted(p.allow.pins),
+                "providers": sorted(p.allow.providers),
                 "radius_km": p.allow.radius_km,
             },
             "deny": {
@@ -359,6 +392,7 @@ class PolicyEngine:
                 "clusters": sorted(p.deny.clusters),
                 "countries": sorted(p.deny.countries),
                 "cidrs": sorted(p.deny.cidrs),
+                "providers": sorted(p.deny.providers),
             },
             "soft": {
                 "enabled": p.soft_mode.enabled,

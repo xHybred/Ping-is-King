@@ -38,22 +38,49 @@ def test_located_outside_allowlist_is_denied(tmp_path):
     cat.close()
 
 
-def test_safe_scope_waits_for_session_before_dropping(tmp_path):
-    cat, eng = setup(tmp_path)
+def test_unclassified_endpoint_waits_for_a_session(tmp_path):
+    policy = Policy(allow=AllowSpec(regions=["US-OH"]), unknown="deny")
+    cat, eng = setup(tmp_path, policy)
     t = 1000.0
-    verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=t)
+    verdict = eng.observe("192.0.2.55", 30000, "outbound", 200, now=t)
     assert verdict["allow"] is True
     assert verdict["kind"] == "grace"
     for _ in range(5):
         t += 0.1
-        eng.observe("198.51.100.10", 30000, "outbound", 200, now=t)
-    verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=t + 0.1)
+        eng.observe("192.0.2.55", 30000, "outbound", 200, now=t)
+    verdict = eng.observe("192.0.2.55", 30000, "outbound", 200, now=t + 0.1)
     assert verdict["allow"] is True
     for _ in range(6):
         t += 0.1
-        verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=t)
+        verdict = eng.observe("192.0.2.55", 30000, "outbound", 200, now=t)
+    assert verdict["allow"] is False
+    assert verdict["kind"] == "unknown"
+    cat.close()
+
+
+def test_located_endpoint_is_dropped_on_the_first_packet(tmp_path):
+    cat, eng = setup(tmp_path)
+    verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=1000.0)
     assert verdict["allow"] is False
     assert verdict["kind"] == "allowlist"
+    cat.close()
+
+
+def test_idle_gap_restarts_the_search_guard(tmp_path):
+    policy = Policy(
+        allow=AllowSpec(regions=["US-OH"]),
+        unknown="deny",
+        soft_mode=SoftMode(enabled=True, relax_after_s=45),
+    )
+    cat, eng = setup(tmp_path, policy)
+    eng._searching_since = 1000.0
+    eng.observe("192.0.2.55", 30000, "outbound", 200, now=1000.0)
+    verdict = eng.observe("192.0.2.55", 30000, "outbound", 200, now=1060.0)
+    assert verdict["kind"] == "soft"
+    assert eng.state()["soft_active"] is True
+    verdict = eng.observe("192.0.2.55", 30000, "outbound", 200, now=1200.0)
+    assert eng.state()["soft_active"] is False
+    assert verdict["kind"] == "grace"
     cat.close()
 
 
@@ -103,7 +130,7 @@ def test_known_server_range_is_dropped_on_the_first_probe(tmp_path):
     cat.close()
 
 
-def test_known_server_on_a_platform_port_is_still_filtered(tmp_path):
+def test_known_server_heartbeat_on_3074_is_control_traffic(tmp_path):
     cat = Catalog(tmp_path / "known3074.db")
     cat.import_geo(
         [{
@@ -121,11 +148,57 @@ def test_known_server_on_a_platform_port_is_still_filtered(tmp_path):
     )
     eng = Engine(cat, PolicyEngine(Policy(allow=AllowSpec(regions=["US-OH"]))))
     eng.policy.set_clusters(cat.clusters())
-    # Match servers can listen on 3074 too; the platform guard must not give a
-    # listed datacenter a free pass just because the port looks like lobby traffic.
+    # The recurring 3074 blocks in support logs were one heartbeat a minute,
+    # not a match. Dropping it just disturbs the lobby.
+    verdict = eng.observe("198.51.100.10", 3074, "outbound", 60, now=1000.0)
+    assert verdict == {"allow": True, "reason": "Platform traffic", "kind": "platform"}
+    cat.close()
+
+
+def test_explicit_deny_still_blocks_a_platform_port(tmp_path):
+    policy = Policy(
+        allow=AllowSpec(regions=["US-OH"]),
+        deny=DenySpec(cidrs=["198.51.100.0/24"]),
+    )
+    cat, eng = setup(tmp_path, policy)
+    # Recent matches writes this rule, so blocking a 3074 server still works.
     verdict = eng.observe("198.51.100.10", 3074, "outbound", 60, now=1000.0)
     assert verdict["allow"] is False
-    assert verdict["kind"] == "allowlist"
+    assert verdict["kind"] == "deny"
+    cat.close()
+
+
+def test_provider_block_does_not_drop_relay_traffic(tmp_path):
+    cat = Catalog(tmp_path / "relay.db")
+    cat.import_geo(
+        [{
+            "cidr": "198.51.100.0/24",
+            "city": "Los Angeles",
+            "region": "California",
+            "region_code": "CA",
+            "country": "United States",
+            "country_code": "US",
+            "lat": 34.05,
+            "lon": -118.24,
+            "asn": "AS20473",
+            "provider": "The Constant Company",
+        }],
+        "community_geo",
+        0.6,
+    )
+    policy = Policy(
+        allow=AllowSpec(regions=["US-OH"]),
+        deny=DenySpec(providers=["Vultr"]),
+    )
+    eng = Engine(cat, PolicyEngine(policy))
+    eng.policy.set_clusters(cat.clusters())
+    # Steam's datagram relays answer above 27050, and a host block must not
+    # leave the game stuck on "Waiting for relay".
+    relay = eng.observe("198.51.100.10", 27056, "outbound", 60, now=1000.0)
+    assert relay == {"allow": True, "reason": "Platform traffic", "kind": "platform"}
+    match = eng.observe("198.51.100.10", 30000, "outbound", 60, now=1000.0)
+    assert match["allow"] is False
+    assert match["kind"] == "provider"
     cat.close()
 
 

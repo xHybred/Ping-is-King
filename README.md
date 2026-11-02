@@ -1,4 +1,4 @@
-﻿<p align="center">
+<p align="center">
   <img src="docs/brand/banner.png" alt="COD Ping King" width="100%">
 </p>
 
@@ -51,7 +51,7 @@ relax the filter rather than leave you searching forever (this can be raised or 
 
 ## Install
 
-1. Download `COD-Ping-King-1.0.11.exe` from the releases page.
+1. Download `COD-Ping-King-1.3.4.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
@@ -100,16 +100,20 @@ Start the game and play a match.
 
 ### Dashboard
 
-Shows whether filtering is running, the server you are on, its city, an estimated
-ping, packet counts and recent matches. **Block** on a match adds that server to
-the deny list. The same button turns into **Unblock**.
+Shows whether filtering is running, the server you are on with its city and
+hosting provider, the deciding rule, latency and traffic, and recent matches.
+The latency figure is an estimate from reply timing, and the label under it says
+so. A server reply cannot arrive faster than the server's tick rate, so the
+estimate bottoms out around 16 ms even when the real route is longer. **Block**
+on a match adds that server to the deny list. The same button turns into
+**Unblock**.
 
 ### Regions
 
 The map shows catalogued servers as dots: green for allowed, red for blocked.
-Click the map to move your home. The list on the right is grouped by country and
-shows the observed ping for each region. The slider sets a radius in kilometres;
-everything inside is allowed.
+The list on the right is grouped by country and shows the observed ping for each
+region. The slider sets a radius in kilometres; everything inside is allowed.
+Drag to pan, scroll to zoom, and double-click to set home.
 
 <a href="docs/screenshots/regions.png"><img src="docs/screenshots/regions.png" alt="Regions screen" width="100%"></a>
 
@@ -119,9 +123,19 @@ card both show which mode you are in.
 
 ### Servers
 
-Everything the app has seen or imported: city, region, ping, bytes, verdict and
-when it was last seen. Search by city or address, filter by verdict, sort any
-column. The CSV export contains the same rows.
+Everything the app has seen or imported: city, provider, region, ping, bytes,
+verdict and when it was last seen. Search by city, address or provider, filter by
+verdict, sort any column. The CSV export contains the same rows.
+
+The **Providers** card at the top groups the catalog by hosting company, with
+server count, regions covered, observed ping and traffic. Each row has a rule
+box: **No rule**, **Allow only** or **Block**. A provider rule narrows the
+regions you already allow; it never widens them, so a provider you allow is
+still blocked outside your regions. A block wins over an allow, unlabelled
+ranges pass because the name is missing rather than rejected, and game service
+endpoints ignore provider rules entirely. Relay traffic on Steam's ports is left
+alone as well, since blocking a hosting company can otherwise strand a lobby on
+"Waiting for relay".
 
 <a href="docs/screenshots/servers.png"><img src="docs/screenshots/servers.png" alt="Servers screen" width="100%"></a>
 
@@ -135,28 +149,57 @@ imported under Settings.
 
 ### Settings
 
-Startup, window behaviour, streamer mode, filtering behaviour, rules backup and
-catalog refresh. **Minimize to tray** is on by default; turn it off if you want
-the close button to exit. **Start with Windows** registers a logon task that runs
-the app elevated and minimized to the tray; a Run key cannot do that because
-Windows will not show a UAC prompt during sign-in. **Blocking scope** decides how
-aggressive filtering is; see below. **Attach to the game** waits until the game
-has stopped opening and closing UDP sockets (about ten seconds after launch)
-before it starts intercepting. **Unload driver on exit** stops the WinDivert
-service when the app quits, so a closed app leaves nothing loaded in the kernel.
-**Leave port 3074 alone** stops watching the game's main socket; it exists for a
-title that will not launch with filtering on, and most matches go unfiltered
-while it is set.
+Grouped by what the setting is for.
+
+**Interface** holds theme, window behaviour and streamer mode. **Minimize to
+tray** is on by default; turn it off if you want the close button to exit.
+
+**Startup** registers a logon task that runs the app elevated and minimized to
+the tray; a Run key cannot do that because Windows will not show a UAC prompt
+during sign-in.
+
+**Filtering** is the options that change verdicts: search guard and its delay,
+and what happens to unclassified endpoints. **Reset filtering options** puts
+those back to defaults, along with blocking scope. **Blocking scope** sits
+under Advanced because Strict is the one setting that can break matchmaking.
+Safe drops listed servers at the first probe and waits for a session before
+dropping anything unclassified; Strict drops anything the rules reject.
+
+**Compatibility** carries settings that exist for a title that misbehaves:
+**Attach to the game** waits until the game has stopped opening and closing UDP
+sockets (about ten seconds after launch) before it starts intercepting. That
+wait happens once per game launch; sockets that open later, like voice, do not
+detach filtering again. **Unload driver on exit** stops the WinDivert service
+when the app quits, so a closed app leaves nothing loaded in the kernel.
+**Leave port 3074 alone**, under Advanced, stops watching the game's main
+socket; it exists for a title that will not launch with filtering on, and most
+matches go unfiltered while it is set.
+
+**Rules and data** combines policy export and import with catalog refresh,
+CSV and discovered-server export, the data folder, and the catalog reset.
 
 <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings screen" width="100%"></a>
 
 ### Diagnostics
 
 Version, elevation, driver state, watched ports, service pins, packet counters,
-intercepted packet rate, handle reopens, blocking scope and match count, plus a
-list of endpoints blocked this session with the reason for each. The buttons
-copy the summary, copy the log text, and open the log folder. It sits in the
-sidebar rather than at the bottom of Settings.
+intercepted packet rate, handle reopens, blocking scope and match count, with
+Copy diagnostics, Copy log, Open log folder and Export diagnostics at the top of
+the card. Export writes the same summary as a text file to Documents. Endpoints
+blocked this session sit in their own full-width table with the reason and time,
+so the list can grow without pushing the buttons off screen. Diagnostics has its
+own sidebar entry rather than sitting at the bottom of Settings.
+
+Copy log folds in the previous log file when the current one is short, so a
+session that rolled over is not cut in half. The log records the version and
+settings at startup, the policy each time it loads or saves, every match start
+and end, and each blocked endpoint with its reason, packet count and rate. A
+burst of blocks in under two seconds is collapsed into one matchmaking-scan
+line.
+
+Ctrl+1 through Ctrl+6 switch between the six screens, and Ctrl+F focuses the
+search box on Regions or Servers. Ctrl+Alt+P pauses or resumes filtering from
+inside the game, so you do not have to alt-tab.
 
 <a href="docs/screenshots/diagnostics.png"><img src="docs/screenshots/diagnostics.png" alt="Diagnostics screen" width="100%"></a>
 
@@ -166,16 +209,18 @@ Outbound UDP from the game is intercepted; inbound is only sniffed. Every
 outbound packet on the game's ports is checked in this order:
 
 1. **Game service pin** - always allow. Auth, lobby, ownership and CDN.
-2. **Deny rules** - ranges, clusters, regions or countries.
+2. **Deny rules** - ranges, clusters, regions, countries or providers.
 3. **Allow pins** - addresses you added yourself.
 4. **Allow rules** - regions, clusters or countries.
-5. **Radius** - clusters inside the circle around home.
-6. **Ping limit** - optional maximum estimated RTT.
-7. **Default** - allow or deny endpoints that are not in the catalog.
-8. **Scope** - safe scope drops listed server ranges at the first probe so the
-   game never selects them, waits for a session before dropping anything else,
-   and never treats platform traffic as a match. Strict drops anything the
-   rules reject.
+5. **Provider allow** - if the list is not empty, only those hosts pass. Pins
+   are exempt.
+6. **Radius** - clusters inside the circle around home.
+7. **Ping limit** - optional maximum estimated RTT.
+8. **Default** - allow or deny endpoints that are not in the catalog.
+9. **Scope** - safe scope drops any located server the rules reject at the first
+   packet, waits for a session before dropping endpoints the catalog has not
+   located, and never treats platform traffic as a match. Strict drops anything
+   the rules reject.
 
 A denied outbound packet is dropped without a reset. The game sees a dead
 endpoint and picks another one, and the server is never told it was refused.
@@ -188,17 +233,21 @@ burst indicator and stuttering even when nothing was being blocked.
 
 Safe scope is the default because matchmaking, lobby and party traffic often
 lands on cloud addresses that no server list contains, and because the game
-pings every candidate datacenter before it picks one. Ranges from the bundled
-server lists are dropped on the first probe, so a datacenter outside your
+pings every candidate datacenter before it picks one. A located server that
+your rules reject is dropped on its first packet, so a datacenter outside your
 regions never answers and never appears as a candidate. Endpoints the catalog
 has not located are only dropped once a flow is busy enough to be an actual
-session, so pixel-thin probes and lobby heartbeats get through. Traffic on the
-game's own port (3074), Steam networking ports (27000-27050) and STUN ports
-(3478, 4379-4380) is treated as control traffic unless the address is a server
-range from the lists, which still follows your rules, so a match server on 3074
-is filtered like any other. Your explicit deny rules always apply. Strict is
-there if you want the older behaviour and do not mind the occasional
-matchmaking failure.
+session, so pixel-thin probes and lobby heartbeats get through. Once a match has
+run on a range, that range is remembered as a game server and gets the same
+first-packet treatment from then on. The search guard timer restarts after a
+minute of quiet, so sitting in the menu does not count as a fruitless search.
+Traffic on the game's own port (3074), Steam networking and relay ports
+(27000-27199) and STUN ports (3478, 4379-4380) is treated as control traffic and
+is not dropped automatically, because that is where lobby, party and relay
+heartbeats live. Provider blocks do not override that either. Your explicit deny
+rules still apply there, and the block button on a match row adds one, so a
+server on 3074 can be rejected by hand. Strict is there if you want the older
+behaviour and do not mind the occasional matchmaking failure.
 
 Auth, lobby, ownership and CDN addresses are resolved at launch and refreshed
 every ten minutes. If one is ever blocked, Diagnostics shows the endpoint and
@@ -215,6 +264,12 @@ The bundled catalog comes from two community lists,
 geolocated with [ip-api](https://ip-api.com), plus whatever the app observes on
 your machine. Nearby addresses are grouped into clusters, and a cluster is what
 you allow or deny.
+
+cod-server-list also records the ASN and organisation for each address, so most
+ranges arrive with a provider attached. Geomate only carries an organisation name
+from the original lookup. Both are collapsed onto the four families that host
+most Call of Duty servers (Google Cloud, Microsoft Azure, Amazon Web Services,
+Vultr) plus the smaller hosts that appear in the lists.
 
 **Settings -> Update from public lists** pulls the current versions and merges new
 ranges without overwriting what the app has already learned.
@@ -238,7 +293,9 @@ mode on after setup; the wizard needs your real location.
 
 The app talks to three places, all optional: ipwho.is for location lookups,
 ipwho.is again for newly observed server ranges, and GitHub for the public list
-download. There is no telemetry and no account.
+download. Location lookups also return the network operator for that address,
+which is how the Servers screen knows who hosts it. There is no telemetry and no
+account.
 
 ## Troubleshooting
 
@@ -261,12 +318,18 @@ where it stopped.
 
 **The wizard recommends nothing.** It needs a home location and at least one
 located cluster. Run **Settings -> Update from public lists**, then try again. A
-fresh catalog has no measured ping, so the wizard falls back to distance and
+fresh catalog has no reply-time data, so the wizard falls back to distance and
 server count.
 
 **Stuck searching.** Check that at least one region is still allowed. The search
 guard lets unclassified endpoints through after 45 seconds, but it cannot help if
 every catalogued server near you is denied. Widen the radius or add a region.
+
+**Stuck on "Waiting for relay".** Relay and lobby hosts run on the same hosting
+providers as match servers, so a provider block can cut the relay and leave the
+loading screen waiting. Set that provider back to **No rule**. Steam relay traffic
+on ports 27000-27199 is exempt by default; an explicit deny on one of those
+addresses still applies.
 
 **"Unable to connect to online services."** Something is blocking a service
 endpoint. Game services are pinned at startup; if the host list could not be
@@ -292,12 +355,15 @@ block it. If an older build is still running, end it once from Task Manager.
 - **Modern Warfare 4 coverage is unverified.** Early sessions will contain
   endpoints the catalog has not located. Safe scope waits for a session before
   dropping those; strict mode blocks them from the first packet.
-- **Safe scope is a trade.** A server range that no public list contains can
-  still answer the matchmaking ping before it is dropped, so a join attempt may
-  fail before the game settles on an allowed server. A brand-new server range
-  may also be allowed if it never looks like a session. Strict mode avoids that
-  at the cost of breaking matchmaking when it meets an endpoint it does not
-  recognise.
+- **Safe scope is a trade.** A range that no public list contains and the app has
+  never seen a match on still gets through the first second of traffic, so the
+  game can land on it once. The session is dropped shortly after and the range is
+  remembered, so the same address is refused on its first packet next time. Strict
+  mode refuses it immediately at the cost of breaking matchmaking when it meets an
+  endpoint it does not recognise.
+- **Provider rules need a provider.** Ranges with no ASN or organisation in the
+  bundled lists pass provider rules because there is nothing to compare. Provider
+  names are only as accurate as the list snapshot.
 - **Geolocation is approximate.** Game servers run on cloud providers whose IPs
   often report a provider headquarters. Clustering nearby addresses helps, but a
   city label can still be wrong.
@@ -368,7 +434,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-1.0.11.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-1.3.4.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 
@@ -426,4 +492,6 @@ tools/         seed, geolocation and brand build scripts
 Not affiliated with or endorsed by Activision Publishing, Inc. Call of Duty is a
 trademark of Activision Publishing, Inc. This project ships no game assets and
 uses no Call of Duty logos.
+
+
 

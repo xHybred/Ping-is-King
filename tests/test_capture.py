@@ -42,6 +42,17 @@ def test_safe_attach_waits_for_stable_ports():
     assert worker._settled(20.0, (30012, 30022)) is True
 
 
+def test_settle_is_not_reapplied_after_the_first_attach():
+    from cod_region_filter.capture import CaptureWorker
+
+    worker = CaptureWorker(engine=object(), attach_mode="safe")
+    assert worker._settled(0.0, (30012,)) is False
+    assert worker._settled(10.0, (30012,)) is True
+    worker._attached_once = True
+    # A voice socket appearing mid-match must not detach filtering for 10s.
+    assert worker._settled(11.0, (30012, 30099)) is True
+
+
 def test_immediate_attach_skips_the_wait():
     from cod_region_filter.capture import CaptureWorker
 
@@ -97,8 +108,10 @@ def test_sniffed_inbound_does_not_count_as_a_verdict(tmp_path):
     engine = Engine(catalog, policy)
     engine.observe("198.51.100.7", 30012, "outbound", 120, now=1000.0)
     engine.observe("198.51.100.7", 30012, "inbound", 120, now=1000.1, count=False)
+    engine.observe_inbound("198.51.100.7", 30012, 480, packets=4, now=1000.2)
     state = engine.state()
     assert state["allowed_packets"] + state["denied_packets"] == 1
+    assert engine._flows[("198.51.100.7", 30012)].inbound == 5
     catalog.close()
 
 
@@ -111,6 +124,28 @@ def test_catalog_version_changes_after_flush(tmp_path):
     catalog.flush()
     assert catalog.version > before
     catalog.close()
+
+
+def test_target_refresh_publishes_a_snapshot(monkeypatch):
+    from cod_region_filter import capture
+
+    monkeypatch.setattr(
+        capture.games,
+        "find_games",
+        lambda: [{"pid": 10, "name": "cod.exe", "match": "exact name"}],
+    )
+    monkeypatch.setattr(
+        capture.games,
+        "udp_ports_map",
+        lambda pids: {10: [30012, 3074]},
+    )
+    worker = capture.CaptureWorker(engine=object())
+    assert worker._refresh_target() is True
+    ports, pid, pids, game = worker._snapshot()
+    assert ports == (3074, 30012)
+    assert pid == 10
+    assert pids == (10,)
+    assert game["name"] == "cod.exe"
 
 
 def test_read_log_returns_the_tail(tmp_path, monkeypatch):

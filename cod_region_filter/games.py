@@ -12,7 +12,7 @@ join a match, so capturing their sockets would only widen the filter.
 from __future__ import annotations
 
 import re
-from typing import Iterable, Sequence
+from typing import Iterable
 
 import psutil
 
@@ -78,11 +78,6 @@ def find_game() -> dict | None:
     ports = udp_ports_map([game["pid"] for game in found])
     found.sort(key=lambda game: (len(ports.get(game["pid"], ())), game["pid"]), reverse=True)
     return found[0]
-
-
-def udp_ports(pid: int) -> list[int]:
-    """Local UDP ports the game has bound, which is what we capture on."""
-    return udp_ports_map([pid]).get(pid, [])
 
 
 def udp_ports_map(pids: Iterable[int]) -> dict[int, list[int]]:

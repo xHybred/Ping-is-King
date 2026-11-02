@@ -24,9 +24,12 @@ CREATE TABLE IF NOT EXISTS ranges (
     country_code  TEXT NOT NULL DEFAULT '',
     lat           REAL,
     lon           REAL,
+    asn           INTEGER NOT NULL DEFAULT 0,
+    provider      TEXT NOT NULL DEFAULT '',
     source        TEXT NOT NULL DEFAULT 'observed',
     confidence    REAL NOT NULL DEFAULT 0.5,
     is_service    INTEGER NOT NULL DEFAULT 0,
+    match_server  INTEGER NOT NULL DEFAULT 0,
     packets       INTEGER NOT NULL DEFAULT 0,
     bytes         INTEGER NOT NULL DEFAULT 0,
     rtt_ms        REAL,
@@ -70,6 +73,43 @@ def region_key(row: dict) -> str:
     return f"{row.get('country_code') or 'XX'}-{row.get('region_code') or ''}".rstrip("-")
 
 
+def asn_value(value) -> int:
+    """Accept 8075, "8075" or "AS8075"; anything else becomes 0."""
+    text = str(value or "").strip().upper()
+    if text.startswith("AS"):
+        text = text[2:]
+    try:
+        return int(text or 0)
+    except ValueError:
+        return 0
+
+
+def provider_label(provider: str, asn: int = 0) -> str:
+    """Collapse hosting brand names onto the family a player would recognise.
+
+    The public lists mix corporate names with regional product strings
+    ("AWS EC2 (af-south-1)", "Vultr Holdings, LLC"), so grouping by the raw
+    string splits one provider across dozens of rows.
+    """
+    name = (provider or "").strip()
+    low = name.lower()
+    if not asn:
+        asn = asn_value(name)
+    if "vultr" in low or "constant company" in low or asn == 20473:
+        return "Vultr"
+    if low.startswith("aws") or "amazon" in low or asn == 16509:
+        return "Amazon Web Services"
+    if "google" in low or asn in (15169, 396982):
+        return "Google Cloud"
+    if "microsoft" in low or asn == 8075:
+        return "Microsoft Azure"
+    if "akamai" in low:
+        return "Akamai"
+    if "cloudflare" in low:
+        return "Cloudflare"
+    return name
+
+
 @dataclass(frozen=True)
 class RangeRecord:
     cidr: str
@@ -84,11 +124,19 @@ class RangeRecord:
     cluster: str
     region_key: str
     source: str = "seed"
+    asn: int = 0
+    provider: str = ""
+    match_server: int = 0
 
     @property
     def known_server(self) -> bool:
-        """True when a public CoD server list placed this range, not traffic we saw."""
-        return self.source in ("seed", "community_geo")
+        """True when we have reason to treat this range as a game server.
+
+        Public lists count, and so does a range this install has already seen a
+        match on. Ranges that were merely observed during a matchmaking scan are
+        not enough on their own.
+        """
+        return self.source in ("seed", "community_geo") or bool(self.match_server)
 
 
 class RangeIndex:
@@ -106,6 +154,20 @@ class RangeIndex:
             except ValueError:
                 continue
             self._nets[(net.version, int(net.network_address), net.prefixlen)] = rec
+
+    def put(self, rec: RangeRecord) -> None:
+        try:
+            net = ipaddress.ip_network(rec.cidr, strict=False)
+        except ValueError:
+            return
+        self._nets[(net.version, int(net.network_address), net.prefixlen)] = rec
+
+    def drop(self, cidr: str) -> None:
+        try:
+            net = ipaddress.ip_network(cidr, strict=False)
+        except ValueError:
+            return
+        self._nets.pop((net.version, int(net.network_address), net.prefixlen), None)
 
     def find(self, ip: str) -> RangeRecord | None:
         try:
@@ -130,15 +192,40 @@ class Catalog:
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(SCHEMA)
+        self._migrate()
         self._conn.commit()
         self._pending: dict[str, dict] = {}
         self._index = RangeIndex()
+        self._dirty_cidrs: set[str] = set()
         self._version = 0
         self._touch()
 
+    def _migrate(self) -> None:
+        """Add columns introduced after a catalog was first created.
+
+        Existing installs keep their observed ranges and match history; the
+        provider, ASN and match-server columns are new, and bundled seed data
+        fills the location fields in later.
+        """
+        have = {row["name"] for row in self._conn.execute("PRAGMA table_info(ranges)")}
+        if "asn" not in have:
+            self._conn.execute("ALTER TABLE ranges ADD COLUMN asn INTEGER NOT NULL DEFAULT 0")
+        if "provider" not in have:
+            self._conn.execute("ALTER TABLE ranges ADD COLUMN provider TEXT NOT NULL DEFAULT ''")
+        if "match_server" not in have:
+            self._conn.execute(
+                "ALTER TABLE ranges ADD COLUMN match_server INTEGER NOT NULL DEFAULT 0"
+            )
+
     def _touch(self) -> None:
-        """Mark the index stale and bump the version readers cache against."""
+        """Mark the whole index stale and bump the version readers cache against."""
         self._index_dirty = True
+        self._version += 1
+
+    def _touch_range(self, cidr: str) -> None:
+        """Re-read one range. A full index rebuild costs 50-90ms, which the
+        packet thread cannot afford while a match is running."""
+        self._dirty_cidrs.add(cidr)
         self._version += 1
 
     @property
@@ -183,6 +270,8 @@ class Catalog:
                     loc.get("country_code", ""),
                     loc.get("lat"),
                     loc.get("lon"),
+                    0,
+                    loc.get("org") or loc.get("isp") or "",
                     "seed",
                     0.4 if loc else 0.15,
                     0,
@@ -196,8 +285,9 @@ class Catalog:
         with self._lock:
             self._conn.executemany(
                 "INSERT OR IGNORE INTO ranges (cidr, city, region, region_code, country, "
-                "country_code, lat, lon, source, confidence, is_service, packets, bytes, "
-                "rtt_ms, first_seen, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "country_code, lat, lon, asn, provider, source, confidence, is_service, "
+                "packets, bytes, rtt_ms, first_seen, last_seen) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 rows,
             )
             self._conn.commit()
@@ -209,6 +299,20 @@ class Catalog:
             count = self.import_geo(payload.get("records", []), "community_geo", 0.55)
             return len(rows) + count
         return len(rows)
+
+    def missing_provider(self) -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM ranges WHERE is_service = 0 AND provider = ''"
+        ).fetchone()
+        return row["n"] if row else 0
+
+    def backfill_providers(self) -> int:
+        """Merge ASN and provider into ranges that were catalogued without them."""
+        community = paths.resource("data/seed_community.json")
+        if not community.exists():
+            return 0
+        payload = json.loads(community.read_text(encoding="utf-8"))
+        return self.import_geo(payload.get("records", []), "community_geo", 0.55)
 
     # -- observation -----------------------------------------------------
 
@@ -233,6 +337,7 @@ class Catalog:
                 return
             pending, self._pending = self._pending, {}
             now = utcnow()
+            inserted: list[str] = []
             for cidr, slot in pending.items():
                 row = self._conn.execute(
                     "SELECT rtt_ms FROM ranges WHERE cidr = ?", (cidr,)
@@ -245,6 +350,7 @@ class Catalog:
                          sum(slot["rtt"]) / len(slot["rtt"]) if slot["rtt"] else None,
                          now, now),
                     )
+                    inserted.append(cidr)
                 else:
                     new_rtt = row["rtt_ms"]
                     if slot["rtt"]:
@@ -256,16 +362,23 @@ class Catalog:
                         (slot["packets"], slot["bytes"], new_rtt, now, cidr),
                     )
             self._conn.commit()
-            self._touch()
+            # Traffic counters are not part of a decision, so an update must
+            # not invalidate the index. A new range still has to be visible.
+            for cidr in inserted:
+                self._touch_range(cidr)
 
     def resolve_location(self, cidr: str, geo: dict) -> None:
         if not geo or geo.get("status") != "success":
             return
         with self._lock:
+            asn = asn_value(geo.get("asn"))
+            provider = (geo.get("provider") or "").strip()
             self._conn.execute(
                 "UPDATE ranges SET city = ?, region = ?, region_code = ?, country = ?, "
-                "country_code = ?, lat = ?, lon = ?, confidence = MAX(confidence, 0.7) "
-                "WHERE cidr = ?",
+                "country_code = ?, lat = ?, lon = ?, "
+                "asn = CASE WHEN ? > 0 THEN ? ELSE asn END, "
+                "provider = CASE WHEN ? != '' THEN ? ELSE provider END, "
+                "confidence = MAX(confidence, 0.7) WHERE cidr = ?",
                 (
                     geo.get("city") or "",
                     geo.get("regionName") or geo.get("region") or "",
@@ -274,11 +387,15 @@ class Catalog:
                     geo.get("countryCode") or "",
                     geo.get("lat"),
                     geo.get("lon"),
+                    asn,
+                    asn,
+                    provider,
+                    provider,
                     cidr,
                 ),
             )
             self._conn.commit()
-            self._touch()
+            self._touch_range(cidr)
 
     def import_geo(self, records: Iterable[dict], source: str, confidence: float) -> int:
         """Merge third-party locations without overwriting better existing data."""
@@ -293,6 +410,8 @@ class Catalog:
                 rec.get("country_code") or "",
                 rec.get("lat"),
                 rec.get("lon"),
+                asn_value(rec.get("asn")),
+                rec.get("provider") or "",
                 source,
                 confidence,
                 0,
@@ -310,8 +429,8 @@ class Catalog:
         with self._lock:
             self._conn.executemany(
                 "INSERT INTO ranges (cidr, city, region, region_code, country, country_code, "
-                "lat, lon, source, confidence, is_service, packets, bytes, rtt_ms, "
-                "first_seen, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
+                "lat, lon, asn, provider, source, confidence, is_service, packets, bytes, rtt_ms, "
+                "first_seen, last_seen) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) "
                 "ON CONFLICT(cidr) DO UPDATE SET "
                 "city = CASE WHEN ranges.city = '' THEN excluded.city ELSE ranges.city END, "
                 "region = CASE WHEN ranges.region = '' THEN excluded.region ELSE ranges.region END, "
@@ -322,6 +441,9 @@ class Catalog:
                 "ELSE ranges.country_code END, "
                 "lat = CASE WHEN ranges.lat IS NULL THEN excluded.lat ELSE ranges.lat END, "
                 "lon = CASE WHEN ranges.lon IS NULL THEN excluded.lon ELSE ranges.lon END, "
+                "asn = CASE WHEN ranges.asn = 0 THEN excluded.asn ELSE ranges.asn END, "
+                "provider = CASE WHEN ranges.provider = '' THEN excluded.provider "
+                "ELSE ranges.provider END, "
                 "confidence = MAX(ranges.confidence, excluded.confidence), "
                 "last_seen = excluded.last_seen",
                 rows,
@@ -352,32 +474,50 @@ class Catalog:
 
     # -- reads -----------------------------------------------------------
 
+    @staticmethod
+    def _range_record(r: sqlite3.Row) -> RangeRecord:
+        return RangeRecord(
+            cidr=r["cidr"],
+            city=r["city"],
+            region=r["region"],
+            region_code=r["region_code"],
+            country=r["country"],
+            country_code=r["country_code"],
+            lat=r["lat"],
+            lon=r["lon"],
+            is_service=bool(r["is_service"]),
+            cluster=cluster_key(dict(r)),
+            region_key=region_key(dict(r)),
+            source=r["source"],
+            asn=r["asn"] or 0,
+            provider=r["provider"] or "",
+            match_server=r["match_server"] or 0,
+        )
+
     def index(self) -> RangeIndex:
         with self._lock:
             if self._index_dirty:
                 rows = self._conn.execute(
                     "SELECT cidr, city, region, region_code, country, country_code, lat, lon, "
-                    "is_service, source FROM ranges"
+                    "is_service, source, asn, provider, match_server "
+                    "FROM ranges"
                 ).fetchall()
-                recs = [
-                    RangeRecord(
-                        cidr=r["cidr"],
-                        city=r["city"],
-                        region=r["region"],
-                        region_code=r["region_code"],
-                        country=r["country"],
-                        country_code=r["country_code"],
-                        lat=r["lat"],
-                        lon=r["lon"],
-                        is_service=bool(r["is_service"]),
-                        cluster=cluster_key(dict(r)),
-                        region_key=region_key(dict(r)),
-                        source=r["source"],
-                    )
-                    for r in rows
-                ]
-                self._index = RangeIndex(recs)
+                self._index = RangeIndex(self._range_record(r) for r in rows)
                 self._index_dirty = False
+                self._dirty_cidrs.clear()
+            elif self._dirty_cidrs:
+                for cidr in self._dirty_cidrs:
+                    row = self._conn.execute(
+                        "SELECT cidr, city, region, region_code, country, country_code, lat, lon, "
+                        "is_service, source, asn, provider, match_server "
+                        "FROM ranges WHERE cidr = ?",
+                        (cidr,),
+                    ).fetchone()
+                    if row is None:
+                        self._index.drop(cidr)
+                    else:
+                        self._index.put(self._range_record(row))
+                self._dirty_cidrs.clear()
             return self._index
 
     def clusters(self) -> list[dict]:
@@ -462,17 +602,78 @@ class Catalog:
     def servers(self, query: str = "", limit: int = 400) -> list[dict]:
         sql = (
             "SELECT cidr, city, region, region_code, country, country_code, lat, lon, source, "
-            "confidence, is_service, packets, bytes, rtt_ms, last_seen FROM ranges "
+            "asn, provider, confidence, is_service, packets, bytes, rtt_ms, "
+            "last_seen FROM ranges "
             "WHERE is_service = 0"
         )
         params: list = []
         if query:
             like = f"%{query}%"
-            sql += " AND (cidr LIKE ? OR city LIKE ? OR region LIKE ? OR country LIKE ?)"
-            params += [like, like, like, like]
+            sql += (
+                " AND (cidr LIKE ? OR city LIKE ? OR region LIKE ? OR country LIKE ? "
+                "OR provider LIKE ?)"
+            )
+            params += [like, like, like, like, like]
         sql += " ORDER BY bytes DESC, last_seen DESC LIMIT ?"
         params.append(limit)
         return [dict(r) for r in self._conn.execute(sql, params).fetchall()]
+
+    def providers(self) -> dict:
+        """Server counts and observed quality grouped by the hosting provider."""
+        rows = self._conn.execute(
+            "SELECT provider, asn, region_code, country_code, packets, bytes, rtt_ms "
+            "FROM ranges WHERE is_service = 0"
+        ).fetchall()
+        groups: dict[str, dict] = {}
+        unknown = 0
+        for row in rows:
+            raw = (row["provider"] or "").strip()
+            if not raw:
+                unknown += 1
+                continue
+            asn = row["asn"] or 0
+            name = provider_label(raw, asn)
+            key = name.lower()
+            g = groups.get(key)
+            if g is None:
+                g = groups[key] = {
+                    "provider": name,
+                    "asns": {},
+                    "servers": 0,
+                    "regions": set(),
+                    "packets": 0,
+                    "bytes": 0,
+                    "rtt_weighted": 0.0,
+                    "rtt_weight": 0,
+                }
+            if asn:
+                g["asns"][asn] = g["asns"].get(asn, 0) + 1
+            g["servers"] += 1
+            if row["region_code"] and row["country_code"]:
+                g["regions"].add(f"{row['country_code']}-{row['region_code']}")
+            g["packets"] += row["packets"]
+            g["bytes"] += row["bytes"]
+            if row["rtt_ms"]:
+                weight = max(1, row["packets"])
+                g["rtt_weighted"] += row["rtt_ms"] * weight
+                g["rtt_weight"] += weight
+        out = []
+        for g in groups.values():
+            out.append(
+                {
+                    "provider": g["provider"],
+                    "asn": max(g["asns"], key=g["asns"].get) if g["asns"] else 0,
+                    "servers": g["servers"],
+                    "regions": len(g["regions"]),
+                    "packets": g["packets"],
+                    "bytes": g["bytes"],
+                    "avg_rtt_ms": round(g["rtt_weighted"] / g["rtt_weight"])
+                    if g["rtt_weight"]
+                    else None,
+                }
+            )
+        out.sort(key=lambda p: (-p["servers"], p["provider"]))
+        return {"providers": out, "unknown": unknown}
 
     def record_match(self, match: dict) -> None:
         self.flush()
@@ -488,14 +689,18 @@ class Catalog:
                     1 if match["allowed"] else 0, match.get("reason", ""),
                 ),
             )
+            self._conn.execute(
+                "UPDATE ranges SET match_server = 1 WHERE cidr = ?", (match["cidr"],)
+            )
             self._conn.commit()
+            self._touch_range(match["cidr"])
 
     def discovered_ranges(self) -> list[dict]:
         """Ranges this install has actually seen traffic from, bundled or not."""
         self.flush()
         rows = self._conn.execute(
-            "SELECT cidr, city, region, region_code, country, country_code, lat, lon, "
-            "source, packets, bytes, rtt_ms, first_seen, last_seen FROM ranges "
+            "SELECT cidr, city, region, region_code, country, country_code, asn, provider, "
+            "lat, lon, source, packets, bytes, rtt_ms, first_seen, last_seen FROM ranges "
             "WHERE is_service = 0 AND packets > 0 "
             "ORDER BY last_seen DESC"
         ).fetchall()
@@ -522,14 +727,15 @@ class Catalog:
         self.flush()
         target.parent.mkdir(parents=True, exist_ok=True)
         rows = self._conn.execute(
-            "SELECT cidr, city, region, country, country_code, lat, lon, packets, bytes, rtt_ms, "
-            "source, confidence, last_seen FROM ranges ORDER BY bytes DESC"
+            "SELECT cidr, city, region, country, country_code, provider, asn, lat, lon, "
+            "packets, bytes, rtt_ms, source, confidence, last_seen FROM ranges "
+            "ORDER BY bytes DESC"
         ).fetchall()
         with target.open("w", newline="", encoding="utf-8") as fh:
             writer = csv.writer(fh)
             writer.writerow([c for c in rows[0].keys()] if rows else [
-                "cidr", "city", "region", "country", "country_code", "lat", "lon",
-                "packets", "bytes", "rtt_ms", "source", "confidence", "last_seen",
+                "cidr", "city", "region", "country", "country_code", "provider", "asn",
+                "lat", "lon", "packets", "bytes", "rtt_ms", "source", "confidence", "last_seen",
             ])
             for r in rows:
                 writer.writerow(list(r))

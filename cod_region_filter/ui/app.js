@@ -1,4 +1,4 @@
-﻿/* COD Ping King UI. No framework, no build step. */
+/* COD Ping King UI. No framework, no build step. */
 
 const ICONS = {
   dashboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="3.5" width="7" height="7" rx="1.5"></rect><rect x="3.5" y="13.5" width="7" height="7" rx="1.5"></rect><rect x="13.5" y="13.5" width="7" height="7" rx="1.5"></rect></svg>',
@@ -15,7 +15,7 @@ const SCREEN_META = {
   servers: ["Servers", "Every endpoint the catalog knows about, and its verdict."],
   rules: ["Rules", "The policy file that decides what is allowed."],
   diagnostics: ["Diagnostics", "What the app sees, and where its files live."],
-  settings: ["Settings", "Startup, search guard and local data."],
+  settings: ["Settings", "Appearance, filtering, compatibility and data."],
 };
 
 // pywebview injects window.pywebview after the page scripts start, so the
@@ -148,6 +148,24 @@ async function copyText(text) {
   }
 }
 
+function diagnosticsText() {
+  const boot = state.boot || {};
+  return JSON.stringify(
+    {
+      version: boot.version,
+      elevated: boot.elevated,
+      driver: boot.driver,
+      driver_error: boot.driver_error,
+      game: boot.game,
+      capture: boot.capture,
+      summary: boot.summary,
+      state: boot.state,
+    },
+    null,
+    2
+  );
+}
+
 function confirmDialog(title, text, confirmLabel = "Confirm") {
   return new Promise((resolve) => {
     $("#modal-title").textContent = title;
@@ -202,7 +220,14 @@ const demo = (() => {
   }));
 
   const servers = [];
+  const demoProviders = [
+    { provider: "Google Cloud", asn: 396982 },
+    { provider: "Vultr", asn: 20473 },
+    { provider: "Microsoft Azure", asn: 8075 },
+    { provider: "Amazon Web Services", asn: 16509 },
+  ];
   built.forEach((r, i) => {
+    const host = demoProviders[i % demoProviders.length];
     for (let n = 0; n < 4; n += 1) {
       servers.push({
         cidr: `203.0.${113 + (i % 3)}.${(i * 11 + n * 7) % 250}`,
@@ -211,6 +236,8 @@ const demo = (() => {
         region_code: r.region_code,
         country: r.country,
         country_code: r.country_code,
+        provider: host.provider,
+        asn: host.asn,
         lat: r.lat,
         lon: r.lon,
         source: n === 0 ? "observed" : "seed",
@@ -227,10 +254,46 @@ const demo = (() => {
     }
   });
 
+  const providersPayload = () => {
+    const groups = new Map();
+    for (const s of servers) {
+      const name = s.provider || "";
+      if (!name) continue;
+      const g = groups.get(name) || {
+        provider: name, asn: s.asn, servers: 0, regions: new Set(),
+        packets: 0, bytes: 0, rttWeighted: 0, rttWeight: 0,
+      };
+      g.servers += 1;
+      if (s.region_key) g.regions.add(s.region_key);
+      g.packets += s.packets;
+      g.bytes += s.bytes;
+      if (s.rtt_ms) {
+        const weight = Math.max(1, s.packets);
+        g.rttWeighted += s.rtt_ms * weight;
+        g.rttWeight += weight;
+      }
+      groups.set(name, g);
+    }
+    const out = [...groups.values()].map((g) => ({
+      provider: g.provider,
+      asn: g.asn,
+      servers: g.servers,
+      regions: g.regions.size,
+      packets: g.packets,
+      bytes: g.bytes,
+      avg_rtt_ms: g.rttWeight ? Math.round(g.rttWeighted / g.rttWeight) : null,
+      rule: policy.deny.providers.includes(g.provider)
+        ? "deny"
+        : policy.allow.providers.includes(g.provider) ? "allow" : "none",
+    }));
+    out.sort((a, b) => b.servers - a.servers || a.provider.localeCompare(b.provider));
+    return { providers: out, unknown: servers.filter((s) => !s.provider).length };
+  };
+
   const matches = [
-    { city: "Ashburn", region: "Virginia", country: "United States", rtt_ms: 29, duration_s: 612, bytes: 18_400_000, allowed: 1, ended_at: "2026-10-30T18:02:00+00:00", remote_ip: "203.0.113.24", cidr: "203.0.113.0/24", blocked: false },
-    { city: "Columbus", region: "Ohio", country: "United States", rtt_ms: 22, duration_s: 498, bytes: 14_200_000, allowed: 1, ended_at: "2026-10-30T17:44:00+00:00", remote_ip: "203.0.113.7", cidr: "203.0.113.0/24", blocked: false },
-    { city: "New York", region: "New York", country: "United States", rtt_ms: 33, duration_s: 731, bytes: 21_800_000, allowed: 1, ended_at: "2026-10-30T17:22:00+00:00", remote_ip: "203.0.113.51", cidr: "203.0.113.0/24", blocked: false },
+    { city: "Ashburn", region: "Virginia", country: "United States", rtt_ms: 29, duration_s: 612, bytes: 18_400_000, allowed: 1, ended_at: "2026-10-30T18:02:00+00:00", remote_ip: "203.0.113.24", cidr: "203.0.113.0/24", provider: "Google Cloud", blocked: false },
+    { city: "Columbus", region: "Ohio", country: "United States", rtt_ms: 22, duration_s: 498, bytes: 14_200_000, allowed: 1, ended_at: "2026-10-30T17:44:00+00:00", remote_ip: "203.0.113.7", cidr: "203.0.113.0/24", provider: "Vultr", blocked: false },
+    { city: "New York", region: "New York", country: "United States", rtt_ms: 33, duration_s: 731, bytes: 21_800_000, allowed: 1, ended_at: "2026-10-30T17:22:00+00:00", remote_ip: "203.0.113.51", cidr: "203.0.113.0/24", provider: "Microsoft Azure", blocked: false },
     { city: "Dallas", region: "Texas", country: "United States", rtt_ms: 54, duration_s: 0, bytes: 240_000, allowed: 0, ended_at: "2026-10-30T17:05:00+00:00", remote_ip: "198.51.100.19", cidr: "198.51.100.0/24", blocked: false },
     { city: "Ashburn", region: "Virginia", country: "United States", rtt_ms: 28, duration_s: 655, bytes: 17_900_000, allowed: 1, ended_at: "2026-10-30T16:48:00+00:00", remote_ip: "203.0.113.28", cidr: "203.0.113.0/24", blocked: false },
     { city: "Los Angeles", region: "California", country: "United States", rtt_ms: 71, duration_s: 0, bytes: 180_000, allowed: 0, ended_at: "2026-10-30T16:30:00+00:00", remote_ip: "198.51.100.72", cidr: "198.51.100.0/24", blocked: false },
@@ -239,8 +302,8 @@ const demo = (() => {
   const policy = {
     mode: "allowlist",
     unknown: "allow",
-    allow: { regions: built.filter((r) => r.allowed).map((r) => r.key), clusters: [], countries: [], pins: [], radius_km: 0 },
-    deny: { regions: [], clusters: [], countries: [], cidrs: [] },
+    allow: { regions: built.filter((r) => r.allowed).map((r) => r.key), clusters: [], countries: [], pins: [], providers: [], radius_km: 0 },
+    deny: { regions: [], clusters: [], countries: [], providers: [], cidrs: [] },
     max_rtt_ms: 0,
     soft_mode: { enabled: true, relax_after_s: 45 },
     strict: false,
@@ -275,8 +338,11 @@ const demo = (() => {
     duration_s: 254,
     bytes: 9_240_000,
     rtt_ms: 28,
+    provider: "Microsoft Azure",
+    asn: 8075,
     allowed: true,
     reason: "Allowed by region",
+    rule_kind: "region",
   };
 
   const stateObj = {
@@ -312,11 +378,13 @@ allow:
   countries: []
   radius_km: ${policy.allow.radius_km}
   pins: []
+  providers: ${list(policy.allow.providers)}
 deny:
   regions: []
   clusters: []
   countries: []
   cidrs: []
+  providers: ${list(policy.deny.providers)}
 max_rtt_ms: 0
 soft_mode:
   enabled: ${policy.soft_mode.enabled}
@@ -364,7 +432,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "1.0.11",
+        version: "1.3.4",
         elevated: true,
         driver: true,
         driver_error: "",
@@ -381,7 +449,7 @@ soft_mode:
         policy_home: config.streamer_mode
           ? { lat: null, lon: null, label: "Hidden by streamer mode", hidden: true }
           : { ...demoLocation },
-        capture: { available: false, running: false, status: "preview", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], attach_mode: "safe", packets: 0, packets_per_second: 0, reopens: 1 },
+        capture: { available: false, running: false, status: "preview", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], attach_mode: "safe", packets: 0, packets_per_second: 0, reopens: 1, sniffed: 0, sniff_sampled: 0 },
         summary: summary(),
         catalog_update: { running: false, message: "", report: [], finished_at: 0 },
         state: statePayload(),
@@ -412,6 +480,7 @@ soft_mode:
         servers: config.streamer_mode
           ? servers.map((s) => ({ ...s, cidr: "Hidden range" }))
           : servers,
+        providers: providersPayload(),
         paths: config.streamer_mode
           ? { policy: "%APPDATA%\\cod-ping-king\\policy.yaml", catalog: "%LOCALAPPDATA%\\cod-ping-king\\catalog.db", log: "" }
           : { policy: "%APPDATA%\\cod-ping-king\\policy.yaml", catalog: "%LOCALAPPDATA%\\cod-ping-king\\catalog.db", log: "" },
@@ -421,7 +490,7 @@ soft_mode:
       return {
         state: statePayload(),
         game: { pid: 12844, name: "cod.exe", exe: "", match: "exact name" },
-        capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], attach_mode: "safe", packets: 184320, packets_per_second: 62.4, reopens: 1 },
+        capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], attach_mode: "safe", packets: 184320, packets_per_second: 62.4, reopens: 1, sniffed: 512640, sniff_sampled: 128160 },
         elevated: true,
         driver: true,
         driver_error: "",
@@ -484,6 +553,13 @@ soft_mode:
     set_soft_mode(enabled, seconds) { policy.soft_mode.enabled = enabled; policy.soft_mode.relax_after_s = seconds; return { ok: true }; },
     set_unknown(mode) { policy.unknown = mode; return { ok: true }; },
     set_strict(on) { policy.strict = Boolean(on); return { ok: true }; },
+    set_provider_rule(provider, rule) {
+      policy.allow.providers = policy.allow.providers.filter((p) => p !== provider);
+      policy.deny.providers = policy.deny.providers.filter((p) => p !== provider);
+      if (rule === "allow") policy.allow.providers.push(provider);
+      if (rule === "deny") policy.deny.providers.push(provider);
+      return { ok: true };
+    },
     set_filtering(on) { stateObj.filtering = on; config.filtering = on; return { ok: true, config }; },
     restart_capture() { return { ok: true }; },
     set_region_blocked(key, blocked) {
@@ -517,6 +593,7 @@ soft_mode:
     },
     export_csv() { return { ok: true, path: "%APPDATA%\\cod-ping-king\\server-catalog.csv" }; },
   read_log() { return { ok: true, text: "2026-11-01 12:00:00 capture open: udp and (udp.SrcPort == 30012)", path: "%LOCALAPPDATA%\\cod-ping-king\\app.log" }; },
+    export_diagnostics() { return { ok: true, path: "%USERPROFILE%\\Documents\\cod-ping-king-diagnostics.txt" }; },
     export_policy() { return { ok: true, path: "%USERPROFILE%\\Documents\\cod-ping-king-policy.yaml" }; },
     reset_catalog() { return { ok: true }; },
     update_catalog() { return { ok: true }; },
@@ -614,12 +691,14 @@ function renderDashboard(boot) {
 
   $("#stat-server").textContent = current ? (current.city || "Unclassified") : "Searching";
   $("#stat-server-sub").textContent = current
-    ? `${current.region || current.country || "Unknown location"}${current.allowed ? "" : " (blocked)"}`
+    ? `${current.region || current.country || "Unknown location"}${current.provider ? ` - ${current.provider}` : ""}${current.allowed ? "" : " (blocked)"}`
     : (s.searching_s ? `Searching for ${fmtDuration(s.searching_s)}` : "No match in progress");
 
-  $("#stat-rtt").textContent = fmtPing(current && current.rtt_ms);
-  $("#stat-denied").textContent = s.denied_packets.toLocaleString();
-  $("#stat-denied-sub").textContent = `${s.allowed_packets.toLocaleString()} allowed`;
+  const shownRtt = current ? current.rtt_ms : null;
+  $("#stat-rtt").textContent = fmtPing(shownRtt);
+  $("#stat-rtt-sub").textContent = "Approximate, from reply timing";
+  $("#stat-denied").textContent = s.allowed_packets.toLocaleString();
+  $("#stat-denied-sub").textContent = `${s.denied_packets.toLocaleString()} dropped${s.soft_active ? ", guard active" : ""}`;
 
   $("#session-tag").textContent = current ? (current.allowed ? "Connected" : "Blocked") : "Idle";
   $("#session-tag").className = `tag ${current ? (current.allowed ? "ok" : "bad") : ""}`;
@@ -627,10 +706,30 @@ function renderDashboard(boot) {
   $("#session-region").textContent = current
     ? `${current.region || current.country || "Unknown location"} - ${current.cidr}`
     : "Start Call of Duty and enter a lobby or match.";
+  $("#session-provider").textContent = current && current.provider
+    ? `${current.provider}${current.asn ? ` - AS${current.asn}` : ""}`
+    : "";
+  const ruleLabels = {
+    region: "Allowed by region",
+    pin: "Allowed by pin",
+    provider: current && /not allowed/i.test(current.reason) ? "Provider not allowed" : "Provider blocked",
+    allowlist: "Not in allowlist",
+    deny: "Blocked by rule",
+    unknown: "Unclassified",
+    grace: "Settling in",
+    platform: "Platform traffic",
+    soft: "Search guard",
+  };
+  const ruleChip = $("#session-rule");
+  const ruleText = current ? ruleLabels[current.rule_kind] || "" : "";
+  ruleChip.hidden = !ruleText;
+  ruleChip.textContent = ruleText;
+  ruleChip.className = `tag ${current && current.allowed ? "ok" : "bad"}`;
   $("#session-duration").textContent = current ? fmtDuration(current.duration_s) : "--";
-  $("#session-rtt").textContent = current ? fmtPing(current.rtt_ms) : "--";
+  $("#session-rtt").textContent = current ? fmtPing(shownRtt) : "--";
   $("#session-ip").textContent = current ? `${current.remote_ip}:${current.port}` : "--";
-  $("#session-reason").textContent = current ? current.reason : "";
+  $("#session-reason").textContent =
+    current && current.reason && current.reason !== ruleText ? current.reason : "";
   $("#session-note").textContent = s.soft_active
     ? "Search guard is allowing unclassified endpoints until a match is found."
     : current
@@ -671,7 +770,7 @@ function renderDashboard(boot) {
   tbody.innerHTML = matches.map((m) => `
     <tr>
       <td><div class="mono">${esc(m.remote_ip)}</div><div class="hint">${esc(m.cidr)}</div></td>
-      <td>${esc(m.city || "Unclassified")}<div class="hint">${esc(m.region || m.country || "")}</div></td>
+      <td>${esc(m.city || "Unclassified")}<div class="hint">${esc(m.region || m.country || "")}${m.provider ? ` - ${esc(m.provider)}` : ""}</div></td>
       <td class="num">${fmtPing(m.rtt_ms)}</td>
       <td class="num">${fmtDuration(m.duration_s)}</td>
       <td class="num">${fmtBytes(m.bytes)}</td>
@@ -964,15 +1063,40 @@ function renderRegions() {
       : "Not set";
 }
 
+function renderProviders() {
+  const boot = state.boot;
+  if (!boot) return;
+  const payload = boot.providers || { providers: [], unknown: 0 };
+  const rows = payload.providers || [];
+  const options = (rule) => `
+    <option value="none"${rule === "none" ? " selected" : ""}>No rule</option>
+    <option value="allow"${rule === "allow" ? " selected" : ""}>Allow only</option>
+    <option value="deny"${rule === "deny" ? " selected" : ""}>Block</option>`;
+  $("#providers-table tbody").innerHTML = rows.map((p) => `
+    <tr>
+      <td>${esc(p.provider)}${p.asn ? `<div class="hint">AS${esc(String(p.asn))}</div>` : ""}</td>
+      <td class="num">${p.servers.toLocaleString()}</td>
+      <td class="num">${p.regions}</td>
+      <td class="num">${fmtPing(p.avg_rtt_ms)}</td>
+      <td class="num">${fmtBytes(p.bytes)}</td>
+      <td><select class="provider-rule" data-provider="${esc(p.provider)}">${options(p.rule || "none")}</select></td>
+    </tr>`).join("") + (payload.unknown
+      ? `<tr><td>Unclassified<div class="hint">No provider in the lists</div></td><td class="num">${payload.unknown.toLocaleString()}</td><td class="num">--</td><td class="num">--</td><td class="num">--</td><td>--</td></tr>`
+      : "");
+  $("#providers-empty").hidden = rows.length > 0;
+  $("#providers-table").hidden = rows.length === 0;
+}
+
 function renderServers() {
   const boot = state.boot;
   if (!boot) return;
+  renderProviders();
   const q = state.serverQuery.toLowerCase();
   let rows = (boot.servers || []).filter((s) => {
     if (state.serverVerdict === "allowed" && !s.allowed) return false;
     if (state.serverVerdict === "blocked" && s.allowed) return false;
     if (state.serverVerdict === "observed" && !s.packets) return false;
-    if (q && !`${s.cidr} ${s.city} ${s.region} ${s.country}`.toLowerCase().includes(q)) return false;
+    if (q && !`${s.cidr} ${s.city} ${s.region} ${s.country} ${s.provider || ""}`.toLowerCase().includes(q)) return false;
     return true;
   });
 
@@ -988,6 +1112,7 @@ function renderServers() {
     <tr>
       <td class="mono">${esc(s.cidr)}</td>
       <td>${esc(s.city || "Unclassified")}</td>
+      <td>${esc(s.provider || "--")}${s.asn ? `<div class="hint">AS${esc(String(s.asn))}</div>` : ""}</td>
       <td>${esc(s.region || s.country || "")}${s.region_key ? `<div class="hint">${esc(s.region_key)}</div>` : ""}</td>
       <td class="num">${fmtPing(s.rtt_ms)}</td>
       <td class="num">${s.packets ? s.packets.toLocaleString() : "--"}</td>
@@ -1012,6 +1137,8 @@ function renderPolicyFacts() {
     ["Mode", summary.mode === "allowlist" ? "Allowlist" : "Blocklist"],
     ["Regions allowed", allow.regions ? allow.regions.length : 0],
     ["Countries allowed", allow.countries ? allow.countries.length : 0],
+    ["Providers allowed", allow.providers ? allow.providers.length : 0],
+    ["Providers blocked", summary.deny && summary.deny.providers ? summary.deny.providers.length : 0],
     ["Radius", allow.radius_km ? `${Math.round(allow.radius_km)} km` : "Off"],
     ["Ping limit", summary.max_rtt_ms ? `${summary.max_rtt_ms} ms` : "Off"],
     ["Unknown endpoints", summary.unknown === "deny" ? "Blocked" : "Allowed"],
@@ -1079,12 +1206,16 @@ function renderSettings() {
     ["Watched UDP ports", (capture.watched || capture.ports || []).join(", ") || "None"],
     ["Service endpoints pinned", summary.service_pins || 0],
     ["Policy", `${summary.mode || "?"}, unknown ${summary.unknown || "?"}`],
+    ["Allowed regions", (summary.allow && summary.allow.regions ? summary.allow.regions.length : 0)],
+    ["Provider rules", `${(summary.allow && summary.allow.providers ? summary.allow.providers.length : 0)} allow, ${(summary.deny && summary.deny.providers ? summary.deny.providers.length : 0)} block`],
+    ["Search guard", summary.soft && summary.soft.enabled ? `${summary.soft.relax_after_s}s` : "Off"],
     ["Blocking scope", summary.strict ? "Strict" : "Safe"],
     ["Allowed / denied packets", `${st.allowed_packets || 0} / ${st.denied_packets || 0}`],
     ["Matches recorded", st.match_count || 0],
     ["Matches cancelled", st.cancelled_total || 0],
     ["Attach mode", capture.attach_mode === "immediate" ? "Immediately" : "After launch"],
     ["Intercepted packets", `${(capture.packets || 0).toLocaleString()} (${capture.packets_per_second || 0}/s)`],
+    ["Inbound sniffed", `${(capture.sniffed || 0).toLocaleString()} (${(capture.sniff_sampled || 0).toLocaleString()} sampled)`],
     ["Handle reopens", capture.reopens || 0],
     ["Driver status", capture.status || "unknown"],
   ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join("");
@@ -1093,6 +1224,8 @@ function renderSettings() {
   $("#driver-error-text").textContent = driverError;
 
   const recent = st.recent || [];
+  const blockedCount = $("#blocked-count");
+  if (blockedCount) blockedCount.textContent = recent.length ? `${recent.length} this session` : "";
   $("#blocked-wrap").hidden = recent.length === 0;
   $("#blocked-empty").hidden = recent.length > 0;
   $("#blocked-table").querySelector("tbody").innerHTML = recent
@@ -1630,9 +1763,36 @@ function bindEvents() {
   $("#set-soft-seconds").addEventListener("change", (e) => mutate(call("set_soft_mode", $("#set-soft").value !== "off", Number(e.target.value) || 45), "Search guard delay saved"));
   $("#set-unknown").addEventListener("change", (e) => mutate(call("set_unknown", e.target.value), "Unknown endpoint rule saved"));
   $("#set-strict").addEventListener("change", (e) => mutate(call("set_strict", e.target.value === "strict"), e.target.value === "strict" ? "Strict scope saved" : "Safe scope saved"));
+  $("#providers-table").addEventListener("change", (e) => {
+    const select = e.target.closest(".provider-rule");
+    if (!select) return;
+    const provider = select.dataset.provider || "";
+    const rule = select.value;
+    const message = rule === "deny" ? `${provider} blocked`
+      : rule === "allow" ? `${provider} allowed only` : `No provider rule for ${provider}`;
+    mutate(call("set_provider_rule", provider, rule), message);
+  });
   $("#set-attach").addEventListener("change", (e) => mutate(call("set_setting", "attach_mode", e.target.value), e.target.value === "immediate" ? "Attaching immediately" : "Attaching after launch"));
   $("#set-unload").addEventListener("change", (e) => mutate(call("set_setting", "unload_driver_on_exit", e.target.checked), e.target.checked ? "Driver unloads on exit" : "Driver stays loaded after exit"));
   $("#set-skip3074").addEventListener("change", (e) => mutate(call("set_setting", "skip_3074", e.target.checked), e.target.checked ? "Port 3074 left alone" : "Port 3074 watched"));
+  $("#reset-filtering").addEventListener("click", async () => {
+    const ok = await confirmDialog(
+      "Reset filtering options?",
+      "Search guard returns to 45 seconds, blocking scope to safe, and unclassified endpoints to the default for your mode. Regions and provider rules are not touched.",
+      "Reset"
+    );
+    if (!ok) return;
+    const unknown = boot.summary && boot.summary.mode === "allowlist" ? "deny" : "allow";
+    await call("set_soft_mode", true, 45);
+    await call("set_unknown", unknown);
+    await call("set_strict", false);
+    await refresh();
+    toast("Filtering options reset", "ok");
+  });
+  $("#export-diag").addEventListener("click", async () => {
+    const result = await call("export_diagnostics", diagnosticsText());
+    toast(result.ok ? `Diagnostics saved to ${result.path}` : result.error || "Export failed", result.ok ? "ok" : "bad");
+  });
   $("#update-catalog").addEventListener("click", async () => {
     const result = await call("update_catalog");
     if (!result.ok) {
@@ -1677,18 +1837,7 @@ function bindEvents() {
     mutate(call("save_policy", text), "Policy imported");
   });
   $("#copy-diag").addEventListener("click", async () => {
-    const boot = state.boot || {};
-    const payload = {
-      version: boot.version,
-      elevated: boot.elevated,
-      driver: boot.driver,
-      driver_error: boot.driver_error,
-      game: boot.game,
-      capture: boot.capture,
-      summary: boot.summary,
-      state: boot.state,
-    };
-    const ok = await copyText(JSON.stringify(payload, null, 2));
+    const ok = await copyText(diagnosticsText());
     toast(ok ? "Diagnostics copied" : "Could not access the clipboard", ok ? "ok" : "bad");
   });
   $("#open-log").addEventListener("click", () => call("open_folder", "log"));
@@ -1731,6 +1880,26 @@ function bindEvents() {
     if (event.key === "Escape" && !$("#modal").hidden) {
       $("#modal").hidden = true;
       rebuildModal();
+      return;
+    }
+    if (!event.ctrlKey || event.altKey || event.metaKey) return;
+    const typing = ["INPUT", "SELECT", "TEXTAREA"].includes(document.activeElement.tagName)
+      || document.activeElement.isContentEditable;
+    const screens = ["dashboard", "regions", "servers", "rules", "diagnostics", "settings"];
+    const index = Number(event.key) - 1;
+    if (index >= 0 && index < screens.length) {
+      event.preventDefault();
+      nav(screens[index]);
+      return;
+    }
+    if (event.key.toLowerCase() === "f" && !typing) {
+      const search = state.screen === "regions" ? $("#region-search")
+        : state.screen === "servers" ? $("#server-search") : null;
+      if (search) {
+        event.preventDefault();
+        search.focus();
+        search.select();
+      }
     }
   });
 }
@@ -1753,4 +1922,6 @@ function bindEvents() {
   await refresh();
   setInterval(poll, 2000);
 })();
+
+
 

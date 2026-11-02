@@ -1,10 +1,10 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en" data-theme="midnight">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COD Ping King</title>
-<link rel="stylesheet" href="styles.css?v=1.0.11">
+<link rel="stylesheet" href="styles.css?v=1.3.4">
 </head>
 <body>
 <div id="app">
@@ -59,7 +59,7 @@
         </div>
       </div>
       <div class="rail-meta">
-        <span id="rail-version">v1.0.11</span>
+        <span id="rail-version">v1.3.4</span>
         <button class="link" id="rail-pause">Pause</button>
       </div>
     </div>
@@ -75,7 +75,7 @@
         <div class="status-pill" id="game-pill" title="Game process detection">
           <span class="dot"></span><span id="game-pill-text">Game not detected</span>
         </div>
-        <button class="btn btn-primary" id="filter-toggle">Pause filtering</button>
+        <button class="btn btn-primary" id="filter-toggle" title="Ctrl+Alt+P works anywhere">Pause filtering</button>
       </div>
     </header>
 
@@ -141,12 +141,12 @@
           <span class="stat-sub" id="stat-server-sub">No match in progress</span>
         </article>
         <article class="card stat">
-          <span class="stat-label">Ping estimate</span>
+          <span class="stat-label">Reply estimate</span>
           <div class="stat-value" id="stat-rtt">--</div>
-          <span class="stat-sub">Round-trip, approximate</span>
+          <span class="stat-sub" id="stat-rtt-sub">Approximate, from reply timing</span>
         </article>
         <article class="card stat">
-          <span class="stat-label">Packets dropped</span>
+          <span class="stat-label">Traffic</span>
           <div class="stat-value" id="stat-denied">0</div>
           <span class="stat-sub" id="stat-denied-sub">0 allowed</span>
         </article>
@@ -165,6 +165,8 @@
             <div class="session-loc">
               <div class="city" id="session-city">No active match</div>
               <div class="region" id="session-region">Start Call of Duty and enter a lobby or match.</div>
+              <div class="session-provider" id="session-provider"></div>
+              <div class="session-rule"><span class="tag" id="session-rule" hidden></span></div>
             </div>
             <div class="session-metrics">
               <div><span>Duration</span><strong id="session-duration">--</strong></div>
@@ -280,6 +282,28 @@
     <section class="screen" id="screen-servers">
       <article class="card">
         <div class="card-head">
+          <div><h2>Providers</h2><p>Where the servers in your catalog are hosted, and how they have performed. A provider rule narrows the regions you already allow; it never widens them.</p></div>
+        </div>
+        <div class="table-wrap">
+          <table class="table" id="providers-table">
+            <thead>
+              <tr>
+                <th>Provider</th>
+                <th class="num">Servers</th>
+                <th class="num">Regions</th>
+                <th class="num">Ping</th>
+                <th class="num">Traffic</th>
+                <th>Rule</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="empty" id="providers-empty" hidden>No provider data yet. Update the catalog or play a match.</div>
+        <p class="hint">Blocking a provider can also cut lobby or relay hosts on it. If a match sits on "Waiting for relay", set that provider back to No rule.</p>
+      </article>
+      <article class="card">
+        <div class="card-head">
           <div><h2>Known servers</h2><p>Observed endpoints and catalogue seeds, with the verdict each one gets.</p></div>
           <div class="chip-row" id="server-chips">
             <button class="chip is-active" data-verdict="all">All</button>
@@ -290,7 +314,7 @@
         </div>
         <div class="field search wide">
           <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4 4"></path></svg>
-          <input type="search" id="server-search" placeholder="Search IP, city, region or country">
+          <input type="search" id="server-search" placeholder="Search IP, city, region, country or provider">
         </div>
         <div class="table-wrap tall">
           <table class="table" id="servers-table">
@@ -298,6 +322,7 @@
               <tr>
                 <th data-sort="cidr">Endpoint</th>
                 <th data-sort="city">City</th>
+                <th data-sort="provider">Provider</th>
                 <th data-sort="region">Region</th>
                 <th class="num" data-sort="rtt_ms">Ping</th>
                 <th class="num" data-sort="packets">Packets</th>
@@ -336,6 +361,7 @@
             <ol class="order-list">
               <li><strong>Game services</strong><span>Auth, lobby, ownership and content servers are always allowed.</span></li>
               <li><strong>Deny</strong><span>Explicit blocks win over region rules.</span></li>
+              <li><strong>Provider</strong><span>Blocked hosts are dropped; an allow list narrows the regions already allowed.</span></li>
               <li><strong>Pins</strong><span>Named ranges stay reachable.</span></li>
               <li><strong>Allow</strong><span>Cluster, region, country or radius match.</span></li>
               <li><strong>Ping limit</strong><span>Optional ceiling on measured round-trip.</span></li>
@@ -367,7 +393,15 @@
           </div>
         </article>
         <article class="card">
-          <div class="card-head"><div><h2>Diagnostics</h2><p>Useful when asking for help.</p></div></div>
+          <div class="card-head">
+            <div><h2>Diagnostics</h2><p>Session counters and capture state.</p></div>
+            <div class="head-actions">
+              <button class="btn btn-small" id="copy-diag">Copy diagnostics</button>
+              <button class="btn btn-small" id="copy-log">Copy log</button>
+              <button class="btn btn-small" id="open-log">Open log folder</button>
+              <button class="btn btn-small" id="export-diag">Export diagnostics</button>
+            </div>
+          </div>
           <dl class="kv compact" id="diag-facts"></dl>
           <div id="driver-error-wrap" hidden>
             <h3>Driver error</h3>
@@ -376,27 +410,27 @@
               <button class="btn btn-small" id="copy-driver-error">Copy error</button>
             </div>
           </div>
-          <h3>Recently blocked</h3>
-          <p class="hint" id="blocked-empty">Nothing blocked in this session.</p>
-          <div class="table-wrap" id="blocked-wrap" hidden>
-            <table class="table" id="blocked-table">
-              <thead><tr><th>Endpoint</th><th>Reason</th><th>When</th></tr></thead>
-              <tbody></tbody>
-            </table>
-          </div>
-          <div class="button-row">
-            <button class="btn btn-small" id="copy-diag">Copy diagnostics</button>
-            <button class="btn btn-small" id="copy-log">Copy log</button>
-            <button class="btn btn-small" id="open-log">Open log folder</button>
-          </div>
         </article>
       </div>
+
+      <article class="card">
+        <div class="card-head">
+          <div><h2>Recently blocked</h2><p>Endpoints dropped this session, with the rule that did it. <span id="blocked-count"></span></p></div>
+        </div>
+        <p class="hint" id="blocked-empty">Nothing blocked in this session.</p>
+        <div class="table-wrap scroll-box" id="blocked-wrap" hidden>
+          <table class="table" id="blocked-table">
+            <thead><tr><th>Endpoint</th><th>Reason</th><th>When</th></tr></thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
     </section>
 
     <section class="screen" id="screen-settings">
       <div class="settings-grid">
         <article class="card">
-          <div class="card-head"><div><h2>Appearance</h2><p>Colors for the window and its title bar.</p></div></div>
+          <div class="card-head"><div><h2>Interface</h2><p>How the window looks and closes.</p></div></div>
           <div class="setting-row">
             <div><strong>Theme</strong><span>Dark themes also tint the Windows title bar.</span></div>
             <select id="set-theme">
@@ -406,6 +440,15 @@
               <option value="light">Light</option>
             </select>
           </div>
+          <div class="setting-row">
+            <div><strong>Minimize to tray</strong><span>Closing the window keeps filtering in the background. Quit from the tray menu.</span></div>
+            <label class="switch"><input type="checkbox" id="set-tray"><span></span></label>
+          </div>
+          <div class="setting-row">
+            <div><strong>Streamer mode</strong><span>Hides your home coordinates and server addresses. Regions still work; the map hides your home marker and radius ring.</span></div>
+            <label class="switch"><input type="checkbox" id="set-streamer"><span></span></label>
+          </div>
+          <p class="hint">Enable streamer mode after setup. Rules editing is disabled while it is on, because the policy file contains your coordinates.</p>
         </article>
 
         <article class="card">
@@ -421,28 +464,8 @@
         </article>
 
         <article class="card">
-          <div class="card-head"><div><h2>Window</h2><p>What the close button does.</p></div></div>
-          <div class="setting-row">
-            <div><strong>Minimize to tray</strong><span>Closing the window keeps filtering in the background. Quit from the tray menu.</span></div>
-            <label class="switch"><input type="checkbox" id="set-tray"><span></span></label>
-          </div>
-          <div class="setting-row">
-            <div><strong>Unload driver on exit</strong><span>Stops the WinDivert service when the app quits so nothing stays in the kernel. It is reinstalled on the next launch.</span></div>
-            <label class="switch"><input type="checkbox" id="set-unload"><span></span></label>
-          </div>
-        </article>
-
-        <article class="card">
-          <div class="card-head"><div><h2>Privacy</h2><p>For recording and live streaming.</p></div></div>
-          <div class="setting-row">
-            <div><strong>Streamer mode</strong><span>Hides your home coordinates and server addresses. Regions still work; the map hides your home marker and radius ring.</span></div>
-            <label class="switch"><input type="checkbox" id="set-streamer"><span></span></label>
-          </div>
-          <p class="hint">Enable after setup. Rules editing is disabled while it is on, because the policy file contains your coordinates.</p>
-        </article>
-
-        <article class="card">
-          <div class="card-head"><div><h2>Filtering behaviour</h2><p>Controls for slow or empty lobbies.</p></div></div>
+          <div class="card-head"><div><h2>Filtering</h2><p>How ambiguous endpoints are handled.</p></div></div>
+          <p class="hint">Changes here apply immediately. Pause filtering on the Dashboard stops all of it.</p>
           <div class="setting-row">
             <div><strong>Search guard</strong><span>Admit unclassified servers if no match is found in time. Located servers outside your list are never admitted.</span></div>
             <select id="set-soft">
@@ -464,13 +487,23 @@
               <option value="deny">Block</option>
             </select>
           </div>
-          <div class="setting-row">
-            <div><strong>Blocking scope</strong><span>Safe drops listed servers and live sessions. Strict drops every endpoint outside your rules, including matchmaking and lobby traffic it does not recognise.</span></div>
-            <select id="set-strict">
-              <option value="safe">Safe</option>
-              <option value="strict">Strict</option>
-            </select>
+          <div class="button-row">
+            <button class="btn btn-small" id="reset-filtering">Reset filtering options</button>
           </div>
+          <details class="advanced">
+            <summary>Advanced</summary>
+            <div class="setting-row">
+              <div><strong>Blocking scope</strong><span>Safe drops listed servers and live sessions. Strict drops every endpoint outside your rules, including matchmaking and lobby traffic it does not recognise.</span></div>
+              <select id="set-strict">
+                <option value="safe">Safe</option>
+                <option value="strict">Strict</option>
+              </select>
+            </div>
+          </details>
+        </article>
+
+        <article class="card">
+          <div class="card-head"><div><h2>Compatibility</h2><p>Only change these if a game misbehaves.</p></div></div>
           <div class="setting-row">
             <div><strong>Attach to the game</strong><span>Wait for the game to finish opening its sockets before filtering. Choose Immediately only if a game fails to launch with filtering on.</span></div>
             <select id="set-attach">
@@ -479,35 +512,48 @@
             </select>
           </div>
           <div class="setting-row">
-            <div><strong>Leave port 3074 alone</strong><span>Stop watching the game's main socket. Only for a game that refuses to launch while filtering is on; most matches then go unfiltered.</span></div>
-            <label class="switch"><input type="checkbox" id="set-skip3074"><span></span></label>
+            <div><strong>Unload driver on exit</strong><span>Stops the WinDivert service when the app quits so nothing stays in the kernel. It is reinstalled on the next launch.</span></div>
+            <label class="switch"><input type="checkbox" id="set-unload"><span></span></label>
           </div>
+          <details class="advanced">
+            <summary>Advanced</summary>
+            <div class="setting-row">
+              <div><strong>Leave port 3074 alone</strong><span>Stop watching the game's main socket. Most matches then go unfiltered.</span></div>
+              <label class="switch"><input type="checkbox" id="set-skip3074"><span></span></label>
+            </div>
+          </details>
         </article>
 
-        <article class="card">
-          <div class="card-head"><div><h2>Rules backup</h2><p>Move your regions between machines.</p></div></div>
-          <p class="hint">Import replaces the current rules. Export writes a YAML file to your Documents folder; it contains your home coordinates, so streamer mode disables it.</p>
-          <div class="button-row">
-            <button class="btn btn-small" id="export-policy">Export policy</button>
-            <button class="btn btn-small" id="import-policy">Import policy</button>
-            <input type="file" id="import-policy-file" accept=".yaml,.yml" hidden>
+        <article class="card card-wide">
+          <div class="card-head">
+            <div><h2>Rules and data</h2><p>Back up your policy, refresh the catalog, or start over.</p></div>
           </div>
-        </article>
-
-        <article class="card">
-          <div class="card-head"><div><h2>Catalog</h2><p>Local database of endpoints and locations.</p></div></div>
-          <dl class="kv compact" id="catalog-facts"></dl>
-          <p class="hint" id="catalog-update-status"></p>
-          <div class="setting-row">
-            <div><strong>Resolve new endpoints</strong><span>Look up locations for servers you connect to.</span></div>
-            <label class="switch"><input type="checkbox" id="set-geo"><span></span></label>
-          </div>
-          <div class="button-row">
-            <button class="btn btn-small" id="update-catalog">Update from public lists</button>
-            <button class="btn btn-small" id="export-catalog">Export CSV</button>
-            <button class="btn btn-small" id="export-discovered">Export discovered</button>
-            <button class="btn btn-small" id="open-folder">Open data folder</button>
-            <button class="btn btn-small btn-danger-ghost" id="reset-catalog">Reset catalog</button>
+          <div class="rules-data">
+            <div>
+              <h3>Policy</h3>
+              <p class="hint">Import replaces the current rules. Export writes YAML to your Documents folder; it contains your home coordinates, so streamer mode disables it.</p>
+              <div class="button-row">
+                <button class="btn btn-small" id="export-policy">Export policy</button>
+                <button class="btn btn-small" id="import-policy">Import policy</button>
+                <input type="file" id="import-policy-file" accept=".yaml,.yml" hidden>
+              </div>
+            </div>
+            <div>
+              <h3>Catalog</h3>
+              <dl class="kv compact" id="catalog-facts"></dl>
+              <p class="hint" id="catalog-update-status"></p>
+              <div class="setting-row">
+                <div><strong>Resolve new endpoints</strong><span>Look up locations for servers you connect to.</span></div>
+                <label class="switch"><input type="checkbox" id="set-geo"><span></span></label>
+              </div>
+              <div class="button-row">
+                <button class="btn btn-small" id="update-catalog">Update from public lists</button>
+                <button class="btn btn-small" id="export-catalog">Export CSV</button>
+                <button class="btn btn-small" id="export-discovered">Export discovered</button>
+                <button class="btn btn-small" id="open-folder">Open data folder</button>
+                <button class="btn btn-small btn-danger-ghost" id="reset-catalog">Reset catalog</button>
+              </div>
+            </div>
           </div>
         </article>
 
@@ -528,8 +574,10 @@
 </div>
 
 <div class="toast-stack" id="toasts" aria-live="polite"></div>
-<script src="world.js?v=1.0.11"></script>
-<script src="app.js?v=1.0.11"></script>
+<script src="world.js?v=1.3.4"></script>
+<script src="app.js?v=1.3.4"></script>
 </body>
 </html>
+
+
 

@@ -22,7 +22,9 @@ import urllib.parse
 import urllib.request
 
 BASE = "https://ipwho.is"
-FIELDS = "success,country,country_code,region,region_code,city,latitude,longitude"
+FIELDS = (
+    "success,country,country_code,region,region_code,city,latitude,longitude,connection"
+)
 BATCH = 20
 MIN_INTERVAL_S = 0.25
 RATE_LIMIT_S = 300.0
@@ -32,6 +34,7 @@ def _normalise(data: dict) -> dict | None:
     """Map ipwho.is fields onto the keys the catalog already understands."""
     if not data.get("success"):
         return None
+    connection = data.get("connection") or {}
     return {
         "status": "success",
         "country": data.get("country") or "",
@@ -41,6 +44,8 @@ def _normalise(data: dict) -> dict | None:
         "city": data.get("city") or "",
         "lat": data.get("latitude"),
         "lon": data.get("longitude"),
+        "provider": (connection.get("org") or connection.get("isp") or "").strip(),
+        "asn": connection.get("asn") or 0,
     }
 
 

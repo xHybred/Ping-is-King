@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 import threading
 import time
@@ -10,7 +11,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from . import catalog_update, games, geo, paths, policy as policy_mod, services, startup, titlebar
-from .catalog import Catalog, cidr_for
+from . import __version__
+from .catalog import Catalog, cidr_for, provider_label
 from .capture import (
     CaptureWorker,
     available as driver_available,
@@ -20,7 +22,7 @@ from .capture import (
 from .engine import Engine
 from .policy import PolicyEngine, parse as parse_policy, dump as dump_policy
 
-APP_VERSION = "1.0.11"
+APP_VERSION = __version__
 
 DEFAULT_CONFIG = {
     "filtering": True,
@@ -65,29 +67,6 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
-def set_run_at_startup(enabled: bool) -> bool:
-    if sys.platform != "win32":
-        return False
-    try:
-        import winreg
-
-        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
-            if enabled:
-                if getattr(sys, "frozen", False):
-                    cmd = f'"{sys.executable}" --minimized'
-                else:
-                    cmd = f'"{sys.executable}" -m cod_region_filter --minimized'
-                winreg.SetValueEx(key, RUN_VALUE, 0, winreg.REG_SZ, cmd)
-            else:
-                try:
-                    winreg.DeleteValue(key, RUN_VALUE)
-                except FileNotFoundError:
-                    pass
-        return True
-    except OSError:
-        return False
-
-
 def relaunch_as_admin() -> bool:
     if sys.platform != "win32":
         return False
@@ -118,6 +97,11 @@ class AppState:
         if self.catalog.is_empty():
             seeded = self.catalog.seed()
             self.log(f"seeded {seeded} ranges")
+        elif self.catalog.missing_provider() > 0:
+            # Catalogs written before provider tracking get the bundled list's
+            # ASN data once. Seeding already fills it, so this only runs on upgrade.
+            filled = self.catalog.backfill_providers()
+            self.log(f"provider backfill: {filled} ranges")
         self.policy_engine = PolicyEngine(self._load_policy())
         self.engine = Engine(self.catalog, self.policy_engine, self.log)
         self.engine.set_filtering(bool(self.config["filtering"]))
@@ -132,6 +116,8 @@ class AppState:
         self.elevated = games.uac_enabled()
         self.driver = driver_available()
         self.game = games.find_game()
+        self._game_cache = self.game
+        self._game_checked_at = 0.0
         self.policy_error = ""
         self._stop = threading.Event()
         self._capture_started = False
@@ -143,8 +129,10 @@ class AppState:
         self._seen_version = -1
         self._catalog_lock = threading.Lock()
         self._catalog_update = {"running": False, "message": "", "report": [], "finished_at": 0.0}
+        self._logger = logging.getLogger("cod-ping-king")
         self.refresh_catalog()
         self._pin_services()
+        self._log_policy("loaded")
 
     # -- setup -----------------------------------------------------------
 
@@ -171,13 +159,32 @@ class AppState:
         try:
             ips = services.resolve_services()
         except Exception as exc:
-            self.log(f"service pin skipped: {exc}")
+            self.log(f"service pin skipped: {type(exc).__name__}: {exc}")
             return
         if ips:
             self.catalog.mark_service(ips)
             self.policy_engine.set_service_ips(ips)
+            self.log(f"service pins: {len(ips)} endpoints")
+
+    def _log_policy(self, event: str) -> None:
+        """One line with the facts every filtering report starts with."""
+        p = self.policy_engine.policy
+        home = "set" if p.home_lat is not None else "unset"
+        soft = f"on/{p.soft_mode.relax_after_s}s" if p.soft_mode.enabled else "off"
+        self.log(
+            f"policy {event}: mode={p.mode} unknown={p.unknown} strict={str(p.strict).lower()} "
+            f"soft={soft} allow={len(p.allow.regions)} regions deny={len(p.deny.cidrs)} ranges "
+            f"radius={p.allow.radius_km:g}km home={home}"
+        )
 
     def start(self) -> None:
+        self.log(
+            f"starting {APP_VERSION}: elevated={self.elevated} driver={self.driver} "
+            f"attach={self.config.get('attach_mode', 'safe')} "
+            f"skip3074={bool(self.config.get('skip_3074'))} "
+            f"filtering={bool(self.config.get('filtering'))}"
+        )
+        self.log(f"catalog: {len(self._clusters)} clusters in {len(self._regions)} regions")
         self.geo.start()
         self._tick_thread = threading.Thread(target=self._tick_loop, name="tick", daemon=True)
         self._tick_thread.start()
@@ -248,10 +255,10 @@ class AppState:
             if now - last_flush > 2.0:
                 last_flush = now
                 self.catalog.flush()
-                # Rebuild on this thread. The capture thread only reads the
-                # index, and rebuilding 6k ranges there stalls re-injection.
+                # Flush only dirties rows it inserted, so this applies a few
+                # records instead of rebuilding all 6k on the capture thread.
                 self.catalog.index()
-            if now - last_refresh > 1.0:
+            if now - last_refresh > 5.0:
                 last_refresh = now
                 if self.catalog.version != self._seen_version:
                     # Regrouping clusters and recompiling the policy is a few
@@ -280,9 +287,6 @@ class AppState:
 
     def _on_geo(self, cidr: str, result: dict) -> None:
         self.catalog.resolve_location(cidr, result)
-        # Tick picks the version change up and regroups once, instead of
-        # rebuilding clusters for every single lookup result.
-        self.catalog.index()
 
     def refresh_catalog(self) -> None:
         self._clusters = self.catalog.clusters()
@@ -359,11 +363,19 @@ class AppState:
             p.home_lon = self.policy_engine.policy.home_lon
         warnings = policy_mod.lint(p)
         with self._policy_lock:
-            paths.policy_path().parent.mkdir(parents=True, exist_ok=True)
-            paths.policy_path().write_text(text, encoding="utf-8")
+            try:
+                paths.policy_path().parent.mkdir(parents=True, exist_ok=True)
+                paths.policy_path().write_text(text, encoding="utf-8")
+            except OSError as exc:
+                return {
+                    "ok": False,
+                    "errors": [f"Could not write the policy file: {exc}"],
+                    "warnings": [],
+                }
             self.policy_engine.set_policy(p)
             self.policy_error = ""
         self.refresh_catalog()
+        self._log_policy("saved")
         return {"ok": True, "errors": [], "warnings": warnings}
 
     def update_policy(self, mutate) -> dict:
@@ -578,6 +590,7 @@ class AppState:
 
         self.config[key] = value
         _write_json(paths.config_path(), self.config)
+        self.log(f"setting {key}={value}")
 
         if key == "filtering":
             self.engine.set_filtering(bool(value))
@@ -623,6 +636,24 @@ class AppState:
     def set_strict(self, enabled: bool) -> dict:
         def mutate(p: policy_mod.Policy) -> None:
             p.strict = bool(enabled)
+
+        return self.update_policy(mutate)
+
+    def set_provider_rule(self, provider: str, rule: str) -> dict:
+        """Set one provider's rule: none, allow or deny."""
+        if rule not in policy_mod.PROVIDER_RULES:
+            return {"ok": False, "errors": [f"rule must be one of {', '.join(policy_mod.PROVIDER_RULES)}"]}
+        name = provider_label(provider)
+        if not name:
+            return {"ok": False, "errors": ["provider is empty"]}
+
+        def mutate(p: policy_mod.Policy) -> None:
+            p.allow.providers = [x for x in p.allow.providers if provider_label(x) != name]
+            p.deny.providers = [x for x in p.deny.providers if provider_label(x) != name]
+            if rule == "allow":
+                p.allow.providers = sorted(p.allow.providers + [name])
+            elif rule == "deny":
+                p.deny.providers = sorted(p.deny.providers + [name])
 
         return self.update_policy(mutate)
 
@@ -677,10 +708,22 @@ class AppState:
             row["region_key"] = rec.region_key if rec else ""
             row["allowed"] = verdict["allow"]
             row["verdict"] = verdict["reason"]
+            row["provider"] = provider_label(row.get("provider") or "", row.get("asn") or 0)
             if streamer:
                 row["cidr"] = "Hidden range"
             out.append(row)
         return out
+
+    def providers_payload(self) -> dict:
+        data = self.catalog.providers()
+        policy = self.policy_engine.policy
+        allowed = {provider_label(name) for name in policy.allow.providers}
+        denied = {provider_label(name) for name in policy.deny.providers}
+        for row in data["providers"]:
+            name = row["provider"]
+            # Deny wins; the policy engine relies on the same order.
+            row["rule"] = "deny" if name in denied else "allow" if name in allowed else "none"
+        return data
 
     def matches_payload(self, limit: int = 10) -> list[dict]:
         rows = self.catalog.matches(limit)
@@ -694,6 +737,8 @@ class AppState:
             if rec is not None and rec.is_service:
                 continue
             row["blocked"] = row.get("cidr") in denied
+            row["provider"] = provider_label(rec.provider, rec.asn) if rec else ""
+            row["asn"] = rec.asn if rec else 0
             if streamer:
                 row["remote_ip"] = "Hidden"
                 row["cidr"] = "Hidden range"
@@ -701,9 +746,17 @@ class AppState:
         return out
 
     def status(self) -> dict:
-        game = games.find_game()
-        self.game = game
         capture = self.capture.status
+        # Capture already enumerates the game every five seconds; polling it again
+        # here made the UI thread repeat that work every two seconds.
+        game = capture.get("game")
+        if not game:
+            now = time.monotonic()
+            if now - self._game_checked_at >= 5.0:
+                self._game_cache = games.find_game()
+                self._game_checked_at = now
+            game = self._game_cache
+        self.game = game
         driver_error = driver_problem(capture)
         if not self.elevated:
             capture["status"] = "administrator required"
@@ -762,7 +815,7 @@ class AppState:
                 message = "No public source could be reached."
             report = data["report"]
         except Exception as exc:
-            self.log(f"catalog update failed: {exc}")
+            self._logger.exception("catalog update failed")
             message = f"Catalog update failed: {exc}"
             report = []
         with self._catalog_lock:
@@ -771,7 +824,7 @@ class AppState:
             )
 
     def read_log(self, limit: int = 200_000) -> dict:
-        """Tail of app.log, for pasting into a bug report."""
+        """Tail of app.log, plus the newest rotation when it still fits."""
         path = paths.log_path()
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
@@ -779,6 +832,13 @@ class AppState:
             return {"ok": False, "error": "No log file yet."}
         except OSError as exc:
             return {"ok": False, "error": str(exc)}
+        backup = path.with_name(path.name + ".1")
+        if len(text) < limit and backup.exists():
+            try:
+                older = backup.read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                older = ""
+            text = older[-limit:] + text
         return {"ok": True, "text": text[-limit:], "path": str(path)}
 
     def export_csv(self) -> dict:
@@ -824,8 +884,21 @@ class AppState:
             return {"ok": False, "error": str(exc)}
         return {"ok": True, "path": str(target)}
 
+    def export_diagnostics(self, text: str) -> dict:
+        docs = Path.home() / "Documents"
+        target_dir = docs if docs.is_dir() else Path.home()
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        target = target_dir / f"cod-ping-king-diagnostics-{stamp}.txt"
+        try:
+            target.write_text(text or "", encoding="utf-8")
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "path": str(target)}
+
     def reset_catalog(self) -> dict:
         self.catalog.reset()
         self.refresh_catalog()
         return {"ok": True}
+
+
 

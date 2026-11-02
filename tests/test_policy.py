@@ -29,12 +29,14 @@ def cluster(key, city, region_code="OH", country_code="US", lat=40.0, lon=-83.0,
 
 
 class Rec:
-    def __init__(self, cidr, key, region_key="US-OH", is_service=False):
+    def __init__(self, cidr, key, region_key="US-OH", is_service=False, provider="", asn=0):
         self.cidr = cidr
         self.cluster = key
         self.region_key = region_key
         self.is_service = is_service
         self.city = "Columbus"
+        self.provider = provider
+        self.asn = asn
 
 
 OHIO = cluster("US|OH|Columbus", "Columbus")
@@ -210,7 +212,59 @@ def test_summary_counts_allowed_clusters():
     assert summary["empty_allowlist"] is False
 
 
+def test_provider_lists_round_trip():
+    p, errors = parse(
+        "mode: allowlist\nallow:\n  providers: [Vultr]\ndeny:\n  providers: [\"Google Cloud\"]\n"
+    )
+    assert errors == [] and p is not None
+    assert p.allow.providers == ["Vultr"]
+    assert p.deny.providers == ["Google Cloud"]
+    text = dump(p)
+    assert "providers:" in text and "Vultr" in text
+    again, errors = parse(text)
+    assert errors == [] and again.allow.providers == ["Vultr"] and again.deny.providers == ["Google Cloud"]
+
+
 def test_soft_mode_defaults():
     p = Policy(soft_mode=SoftMode())
     assert p.soft_mode.enabled is True
     assert p.soft_mode.relax_after_s == 45
+
+
+def test_provider_allow_list_narrows_within_allowed_regions():
+    p = Policy(allow=AllowSpec(regions=["US-OH"], providers=["Vultr"]))
+    eng = engine(p)
+    ok = eng.decide("1.2.3.4", Rec("1.2.3.0/24", OHIO["key"], provider="Vultr", asn=20473), OHIO)
+    assert ok["allow"] is True
+    other = eng.decide("5.6.7.8", Rec("5.6.7.0/24", OHIO["key"], provider="Google LLC", asn=15169), OHIO)
+    assert other["allow"] is False and other["kind"] == "provider"
+    assert "Google Cloud" in other["reason"]
+
+
+def test_provider_rule_passes_endpoints_without_a_provider():
+    p = Policy(allow=AllowSpec(regions=["US-OH"], providers=["Vultr"]))
+    eng = engine(p)
+    verdict = eng.decide("9.9.9.9", Rec("9.9.9.0/24", OHIO["key"]), OHIO)
+    assert verdict["allow"] is True
+
+
+def test_provider_block_wins_over_allow_and_region():
+    p = Policy(allow=AllowSpec(regions=["US-OH"], providers=["Vultr"]), deny=DenySpec(providers=["Vultr"]))
+    eng = engine(p)
+    verdict = eng.decide("1.2.3.4", Rec("1.2.3.0/24", OHIO["key"], provider="AS20473 Vultr", asn=20473), OHIO)
+    assert verdict["allow"] is False and verdict["kind"] == "provider"
+    assert "Vultr blocked" in verdict["reason"]
+
+
+def test_service_endpoint_ignores_denied_provider():
+    p = Policy(allow=AllowSpec(regions=["US-OH"]), deny=DenySpec(providers=["Vultr"]))
+    eng = engine(p)
+    rec = Rec("1.2.3.0/24", OHIO["key"], is_service=True, provider="Vultr", asn=20473)
+    assert eng.decide("1.2.3.4", rec, OHIO)["kind"] == "service"
+
+
+def test_manual_pin_bypasses_provider_allow_list():
+    p = Policy(allow=AllowSpec(regions=["US-OH"], providers=["Vultr"], pins=["8.8.4.0/24"]))
+    eng = engine(p)
+    rec = Rec("8.8.4.0/24", OHIO["key"], provider="Google LLC", asn=15169)
+    assert eng.decide("8.8.4.4", rec, OHIO)["allow"] is True

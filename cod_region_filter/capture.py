@@ -31,6 +31,11 @@ ATTACH_SETTLE_S = 10.0
 # voice or party socket.
 REOPEN_MIN_INTERVAL_S = 15.0
 
+# The sniffer only feeds RTT and byte counters, so one copy in four is plenty.
+# Forwarding every copy through the verdict path was competing with outbound
+# re-injection and showed up as rubber-banding.
+SNIFF_SAMPLE = 4
+
 DRIVER_SERVICES = ("WinDivert", "WinDivert1.4")
 
 
@@ -114,13 +119,23 @@ class CaptureWorker(threading.Thread):
         if active:
             self._active.set()
         self._attached = threading.Event()
+        self._attached_once = False
         self._handle = None
         self._open_filter = ""
+        self._open_ports: tuple[int, ...] = ()
         self._opened_at = 0.0
         self._reopens = 0
         self._packets = 0
         self._sniff = None
         self._sniff_filter = ""
+        self._sniffed = 0
+        self._sniff_sampled = 0
+        self._sniff_pending: dict[tuple[str, int], list[int]] = {}
+        self._settle_logged = False
+        self._target_lock = threading.Lock()
+        self._ports_changed = threading.Event()
+        self._hold_logged_at = 0.0
+        self._slow_log_at = 0.0
         self._pid: int | None = None
         self._pids: tuple[int, ...] = ()
         self._game: dict | None = None
@@ -136,21 +151,24 @@ class CaptureWorker(threading.Thread):
     def status(self) -> dict:
         elapsed = time.monotonic() - self._opened_at if self._opened_at else 0.0
         rate = round(self._packets / elapsed, 1) if elapsed > 0 else 0.0
+        ports, pid, pids, game = self._snapshot()
         return {
             "available": available(),
             "running": self.is_alive() and self._handle is not None,
             "paused": not self._active.is_set(),
             "status": self._status,
             "error": self._error,
-            "pid": self._pid,
-            "pids": list(self._pids),
-            "game": self._game,
-            "ports": list(self._ports),
-            "watched": list(filter_ports(self._ports, self._skip_3074)),
+            "pid": pid,
+            "pids": list(pids),
+            "game": game,
+            "ports": list(ports),
+            "watched": list(filter_ports(ports, self._skip_3074)),
             "attach_mode": self._attach_mode,
             "packets": self._packets,
             "packets_per_second": rate,
             "reopens": self._reopens,
+            "sniffed": self._sniffed,
+            "sniff_sampled": self._sniff_sampled,
         }
 
     def stop(self) -> None:
@@ -195,6 +213,11 @@ class CaptureWorker(threading.Thread):
     def _settled(self, now: float, ports: tuple[int, ...]) -> bool:
         if self._attach_mode == "immediate":
             return True
+        if self._attached_once:
+            # The wait exists for the game's launch socket churn. Reapplying it
+            # whenever a voice socket appeared detached filtering for ten
+            # seconds in the middle of a match.
+            return True
         if ports != self._stable_ports:
             self._stable_ports = ports
             self._stable_since = now
@@ -204,16 +227,24 @@ class CaptureWorker(threading.Thread):
             return False
         return now - self._stable_since >= ATTACH_SETTLE_S
 
+    def _snapshot(self) -> tuple[tuple[int, ...], int | None, tuple[int, ...], dict | None]:
+        with self._target_lock:
+            return self._ports, self._pid, self._pids, self._game
+
     def _refresh_target(self) -> bool:
+        """Read the game's sockets. Slow, so this never runs on the packet thread."""
         found = games.find_games()
         if not found:
-            self._pid = None
-            self._pids = ()
-            self._game = None
-            self._ports = ()
-            self._stable_ports = ()
-            self._stable_since = None
-            self._status = "waiting for game"
+            with self._target_lock:
+                self._pid = None
+                self._pids = ()
+                self._game = None
+                self._ports = ()
+                self._stable_ports = ()
+                self._stable_since = None
+                self._attached_once = False
+                self._settle_logged = False
+                self._status = "waiting for game"
             return False
 
         ports_by_pid = games.udp_ports_map([game["pid"] for game in found])
@@ -221,30 +252,66 @@ class CaptureWorker(threading.Thread):
         # filter does not depend on which one psutil lists first.
         primary = max(found, key=lambda game: (len(ports_by_pid.get(game["pid"], ())), game["pid"]))
         ports = tuple(sorted({port for values in ports_by_pid.values() for port in values}))
-        previous = self._game or {}
-        changed = (
-            primary["pid"] != self._pid
-            or primary["name"] != previous.get("name")
-            or ports != self._ports
-        )
-        if primary["name"] != previous.get("name"):
+        with self._target_lock:
+            previous = self._game or {}
+            changed = (
+                primary["pid"] != self._pid
+                or primary["name"] != previous.get("name")
+                or ports != self._ports
+            )
+            detected = (
+                primary["name"] != previous.get("name")
+                or primary["pid"] != previous.get("pid")
+            )
+            launched = self._pid is not None and primary["pid"] != self._pid
+            if launched:
+                # A new process is a new launch; settle again before attaching.
+                self._attached_once = False
+                self._settle_logged = False
+            self._pid = primary["pid"]
+            self._pids = tuple(sorted(game["pid"] for game in found))
+            self._game = primary
+            self._ports = ports
+        if detected:
             self.log(
                 f"game detected: {primary['name']} (pid {primary['pid']}, {primary['match']})"
             )
-        self._pid = primary["pid"]
-        self._pids = tuple(sorted(game["pid"] for game in found))
-        self._game = primary
-        self._ports = ports
         return changed
+
+    def _refresh_loop(self) -> None:
+        """Keep the socket list current without stalling packet re-injection."""
+        while not self._stop.is_set():
+            try:
+                if self._refresh_target():
+                    self._ports_changed.set()
+            except Exception as exc:
+                self.log(f"target refresh failed: {type(exc).__name__}: {exc}")
+            self._stop.wait(5.0)
 
     def _sniff_loop(self) -> None:
         """Mirror inbound packets without holding them. Used for RTT and bytes."""
+        last_match_check = 0.0
         while not self._stop.is_set():
             if not self._active.is_set() or not self._attached.is_set():
                 self._close_sniff()
                 self._stop.wait(0.3)
                 continue
-            ports = filter_ports(self._ports, self._skip_3074)
+            now = time.monotonic()
+            if now - last_match_check > 1.0:
+                last_match_check = now
+                try:
+                    in_match = self.engine.current_match() is not None
+                except Exception:
+                    in_match = False
+                if in_match:
+                    # During a match the estimator has enough samples, and a
+                    # second handle copying every packet is the most expensive
+                    # thing we do. Resume when the match ends.
+                    self._close_sniff()
+                    self._sniff_pending.clear()
+                    self._stop.wait(1.0)
+                    continue
+            ports = filter_ports(self._snapshot()[0], self._skip_3074)
             if not ports:
                 self._stop.wait(0.5)
                 continue
@@ -259,28 +326,42 @@ class CaptureWorker(threading.Thread):
                     handle.open()
                 except Exception as exc:
                     if not self._stop.is_set():
-                        self.log(f"sniff open failed: {exc}")
+                        self.log(f"sniff open failed: {type(exc).__name__}: {exc}")
                         self._stop.wait(5.0)
                     continue
                 self._sniff = handle
                 self._sniff_filter = flt
             try:
                 packet = self._sniff.recv()
-            except Exception:
+            except Exception as exc:
                 self._close_sniff()
                 if not self._stop.is_set() and self._active.is_set():
-                    self._stop.wait(0.5)
+                    # A sniff handle that keeps failing used to reopen every
+                    # half second, which showed up as constant churn in the log.
+                    self.log(f"sniff closed: {type(exc).__name__}")
+                    self._stop.wait(3.0)
                 continue
+            self._sniffed += 1
+            key = (packet.src_addr, packet.src_port)
+            pending = self._sniff_pending.get(key)
+            if pending is None:
+                pending = self._sniff_pending[key] = [0, 0]
+            pending[0] += 1
+            pending[1] += len(packet.raw or b"")
+            if pending[0] < SNIFF_SAMPLE:
+                continue
+            count, size = pending
+            self._sniff_pending[key] = [0, 0]
+            self._sniff_sampled += 1
             try:
-                self.engine.observe(
+                self.engine.observe_inbound(
                     packet.src_addr,
                     packet.src_port,
-                    "inbound",
-                    len(packet.raw or b""),
-                    count=False,
+                    size,
+                    packets=count,
                 )
             except Exception as exc:
-                self.log(f"sniff observe failed: {exc}")
+                self.log(f"sniff observe failed: {type(exc).__name__}: {exc}")
 
     def run(self) -> None:
         if pydivert is None:
@@ -291,6 +372,12 @@ class CaptureWorker(threading.Thread):
         sniffer = threading.Thread(target=self._sniff_loop, name="sniff", daemon=True)
         sniffer.start()
 
+        # Socket discovery is psutil-heavy. Keep it off the thread that has to
+        # re-inject packets, or every refresh shows up as a hitch.
+        self._refresh_target()
+        refresher = threading.Thread(target=self._refresh_loop, name="capture-refresh", daemon=True)
+        refresher.start()
+
         while not self._stop.is_set():
             if not self._active.is_set():
                 self._close_handle()
@@ -298,29 +385,38 @@ class CaptureWorker(threading.Thread):
                 self._stop.wait(0.3)
                 continue
 
-            self._refresh_target()
-            ports = filter_ports(self._ports, self._skip_3074)
-            if not self._ports:
+            ports, _pid, _pids, _game = self._snapshot()
+            watched = filter_ports(ports, self._skip_3074)
+            if not ports:
                 self._close_handle()
                 self._stop.wait(2.0)
                 continue
-            if not ports:
+            if not watched:
                 self._close_handle()
                 self._status = "game running, no filterable UDP sockets"
                 self._stop.wait(2.0)
                 continue
-            if not self._settled(time.monotonic(), ports):
+            if not self._settled(time.monotonic(), watched):
+                if not self._settle_logged:
+                    self.log(
+                        f"attach settle: waiting {ATTACH_SETTLE_S:.0f}s for "
+                        f"{len(watched)} ports to hold still"
+                    )
+                    self._settle_logged = True
                 self._close_handle()
                 self._status = "waiting for game to settle"
                 self._stop.wait(0.3)
                 continue
 
-            flt = port_filter(ports, "SrcPort")
+            flt = port_filter(watched, "SrcPort")
             now = time.monotonic()
             reopen = self._handle is None or flt != self._open_filter
             if reopen and self._handle is not None and now - self._opened_at < REOPEN_MIN_INTERVAL_S:
                 # A socket opened mid-session is not worth dropping the queued
                 # packets a reopen costs; keep filtering the old set for now.
+                if now - self._hold_logged_at > 15.0:
+                    self.log(f"capture: holding {len(self._open_ports)}-port filter, {len(watched)} ports seen")
+                    self._hold_logged_at = now
                 reopen = False
             if reopen:
                 # Close first: two live handles on the same filter would each
@@ -332,18 +428,21 @@ class CaptureWorker(threading.Thread):
                 except Exception as exc:
                     self._status = "driver error"
                     self._error = str(exc)
-                    self.log(f"capture open failed: {exc}")
+                    self.log(f"capture open failed: {type(exc).__name__}: {exc}")
                     self._stop.wait(5.0)
                     continue
                 self._handle = handle
                 self._open_filter = flt
+                self._open_ports = watched
                 self._opened_at = time.monotonic()
                 self._reopens += 1
+                self._attached_once = True
+                self._settle_logged = False
                 self._attached.set()
                 self._status = "filtering"
-                self.log(f"capture open: {flt}")
+                self.log(f"capture open: {len(watched)} ports, {len(flt)} filter chars")
 
-            last_refresh = time.monotonic()
+            last_check = time.monotonic()
             try:
                 while not self._stop.is_set() and self._active.is_set():
                     packet = self._handle.recv()
@@ -352,6 +451,7 @@ class CaptureWorker(threading.Thread):
                         # happen; release it untouched rather than hold it.
                         self._handle.send(packet)
                         continue
+                    started = time.perf_counter()
                     self._packets += 1
                     verdict = self.engine.observe(
                         packet.dst_addr,
@@ -362,16 +462,23 @@ class CaptureWorker(threading.Thread):
                     if verdict["allow"]:
                         self._handle.send(packet)
 
-                    if time.monotonic() - last_refresh > 5.0:
-                        last_refresh = time.monotonic()
-                        if self._refresh_target():
+                    spent = time.perf_counter() - started
+                    now = time.monotonic()
+                    if spent > 0.05 and now - self._slow_log_at > 5.0:
+                        self._slow_log_at = now
+                        self.log(f"capture slow: {spent * 1000:.0f}ms handling one packet")
+
+                    if now - last_check > 1.0:
+                        last_check = now
+                        if self._ports_changed.is_set() and now - self._opened_at >= REOPEN_MIN_INTERVAL_S:
+                            self._ports_changed.clear()
                             break
             except Exception as exc:
                 if self._stop.is_set() or not self._active.is_set():
                     continue
                 self._error = str(exc)
                 self._status = "capture restarted"
-                self.log(f"capture error: {exc}")
+                self.log(f"capture error: {type(exc).__name__}: {exc}")
                 self._close_handle()
                 self._stop.wait(2.0)
             finally:
@@ -380,3 +487,4 @@ class CaptureWorker(threading.Thread):
 
         self._close_sniff()
         sniffer.join(timeout=2)
+        refresher.join(timeout=2)
