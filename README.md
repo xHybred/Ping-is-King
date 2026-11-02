@@ -2,7 +2,7 @@
   <img src="docs/brand/banner.png" alt="COD Ping King" width="100%">
 </p>
 
-# PiK Tool
+# COD Ping King
 
 **Ping is King**
 
@@ -11,10 +11,9 @@ there was no setting to tell it otherwise. It is a packet filter for Call of Dut
 on Windows: you choose the regions you are willing to play on, and traffic to
 everything else is dropped.
 
-It's not a VPN, nor does it does it modify the game or read its memory. The app watches
+It is not a VPN, and it does not modify the game or read its memory. It watches
 the game's UDP traffic with WinDivert, works out which server the match is using,
-then drops packets to servers outside your rules. When this happens the game sees a dead endpoint
-and searches again.
+and drops packets to servers outside your rules.
 
 <p align="center">
   <a href="docs/screenshots/dashboard.png"><img src="docs/screenshots/dashboard.png" alt="Dashboard showing the current match and recent servers" width="100%"></a>
@@ -23,21 +22,16 @@ and searches again.
 ## What it does
 
 - Allow or block regions and cities, or set a radius around your home.
-- Block the server from your last match with one click. It is added to the deny
-  list as a /24 and applies from the next search.
-- Authentication, lobby, ownership and CDN endpoints are resolved at startup and
-  always allowed. They do not show up in the server lists.
-- If a search runs past 45 seconds, unclassified endpoints are let through so a
-  narrow policy cannot leave you stuck in the lobby.
+- Block a match's server with one click. It joins the deny list as a /24 and
+  applies to the next search.
+- Authentication, lobby, ownership and CDN endpoints are always allowed and stay
+  out of the server lists.
 - Streamer mode hides your location and server addresses for screenshots and
-  recordings.
-- Closing the window keeps filtering in the background. Quit from the tray or
-  Settings.
+  recordings. Closing the window keeps filtering in the tray.
 
-Matchmaking has its own idea of where you should play, and this does not change
-how the game rates you. It only limits which servers are reachable. If the
-closest servers have nobody in your bracket, the search guard will eventually
-relax the filter rather than leave you searching forever (this can be raised or disabled. User choice).
+It does not change how the game rates you, only which servers are reachable. If
+your bracket has nobody nearby, the search guard relaxes the filter instead of
+leaving you searching; you can raise or disable it in Settings.
 
 ## Requirements
 
@@ -70,15 +64,13 @@ driver loaded, and that the catalog is ready.
 
 <a href="docs/screenshots/setup-1.png"><img src="docs/screenshots/setup-1.png" alt="Setup step 1: game, administrator and catalog checks" width="100%"></a>
 
-If the administrator check fails, close the app and start it with **Run as
-administrator**. It still opens without elevation, but it can only watch traffic;
-it cannot filter.
+If that check fails, close the app and start it with **Run as administrator**.
+Without elevation it can still watch traffic, but it cannot filter.
 
 ### 2. Set your home location
 
-Click **Detect location**, or click your area on the map. The coordinates give
-the radius and the recommendations something to measure from. You can change or
-reset this later on the Regions screen.
+Click **Detect location**, or click your area on the map. The radius and the
+recommendations measure from here; you can change or reset it later on Regions.
 
 <a href="docs/screenshots/setup-2.png"><img src="docs/screenshots/setup-2.png" alt="Setup step 2: home location" width="100%"></a>
 
@@ -100,13 +92,11 @@ Start the game and play a match.
 
 ### Dashboard
 
-Shows whether filtering is running, the server you are on with its city and
-hosting provider, the deciding rule, latency and traffic, and recent matches.
-The latency figure is an estimate from reply timing, and the label under it says
-so. A server reply cannot arrive faster than the server's tick rate, so the
-estimate bottoms out around 16 ms even when the real route is longer. **Block**
-on a match adds that server to the deny list. The same button turns into
-**Unblock**.
+Shows filtering state, the current server with its city and provider, the
+deciding rule, latency and traffic, and recent matches. Latency is an estimate
+from reply timing: a server cannot reply faster than its tick rate, so the number
+bottoms out near 16 ms even when the route is longer. **Block** adds a match's
+server to the deny list; the same button turns into **Unblock**.
 
 ### Regions
 
@@ -127,15 +117,12 @@ Everything the app has seen or imported: city, provider, region, ping, bytes,
 verdict and when it was last seen. Search by city, address or provider, filter by
 verdict, sort any column. The CSV export contains the same rows.
 
-The **Providers** card at the top groups the catalog by hosting company, with
-server count, regions covered, observed ping and traffic. Each row has a rule
-box: **No rule**, **Allow only** or **Block**. A provider rule narrows the
-regions you already allow; it never widens them, so a provider you allow is
-still blocked outside your regions. A block wins over an allow, unlabelled
-ranges pass because the name is missing rather than rejected, and game service
-endpoints ignore provider rules entirely. Relay traffic on Steam's ports is left
-alone as well, since blocking a hosting company can otherwise strand a lobby on
-"Waiting for relay".
+The **Providers** card groups the catalog by hosting company, with server count,
+regions covered, observed ping and traffic. Each row can be **No rule**, **Allow
+only** or **Block**. A provider rule narrows the regions you already allow and
+never widens them; a block beats an allow. Ranges with no provider pass, game
+services ignore provider rules, and so does Steam relay traffic, since a block can
+otherwise strand a lobby on "Waiting for relay".
 
 <a href="docs/screenshots/servers.png"><img src="docs/screenshots/servers.png" alt="Servers screen" width="100%"></a>
 
@@ -152,54 +139,41 @@ imported under Settings.
 Grouped by what the setting is for.
 
 **Interface** holds theme, window behaviour and streamer mode. **Minimize to
-tray** is on by default; turn it off if you want the close button to exit.
+tray** is on by default; turn it off if the close button should exit.
 
-**Startup** registers a logon task that runs the app elevated and minimized to
-the tray; a Run key cannot do that because Windows will not show a UAC prompt
-during sign-in.
+**Startup** registers a logon task that runs elevated and minimized, because a
+Run key cannot show a UAC prompt at sign-in.
 
-**Filtering** is the options that change verdicts: search guard and its delay,
-and what happens to unclassified endpoints. **Reset filtering options** puts
-those back to defaults, along with blocking scope. **Blocking scope** sits
-under Advanced because Strict is the one setting that can break matchmaking.
-Safe drops listed servers at the first probe and waits for a session before
-dropping anything unclassified; Strict drops anything the rules reject.
+**Filtering** holds search guard, its delay and the unclassified endpoint rule.
+**Reset filtering options** restores those plus blocking scope. **Blocking
+scope** is under Advanced because Strict can break matchmaking: Safe drops
+listed servers on first contact, Strict drops anything the rules reject.
 
-**Compatibility** carries settings that exist for a title that misbehaves:
-**Attach to the game** waits until the game has stopped opening and closing UDP
-sockets (about ten seconds after launch) before it starts intercepting. That
-wait happens once per game launch; sockets that open later, like voice, do not
-detach filtering again. **Unload driver on exit** stops the WinDivert service
-when the app quits, so a closed app leaves nothing loaded in the kernel.
-**Leave port 3074 alone**, under Advanced, stops watching the game's main
-socket; it exists for a title that will not launch with filtering on, and most
-matches go unfiltered while it is set.
+**Compatibility** is for titles that misbehave. **Attach to the game** waits for
+UDP sockets to settle (about ten seconds after launch) before intercepting; the
+wait happens once per launch. **Unload driver on exit** stops the WinDivert
+service on quit. **Leave port 3074 alone**, under Advanced, stops watching the
+main socket and leaves most matches unfiltered.
 
-**Rules and data** combines policy export and import with catalog refresh,
-CSV and discovered-server export, the data folder, and the catalog reset.
+**Rules and data** combines policy export/import with catalog refresh, CSV and
+discovered-server export, the data folder and catalog reset.
 
 <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings screen" width="100%"></a>
 
 ### Diagnostics
 
 Version, elevation, driver state, watched ports, service pins, packet counters,
-intercepted packet rate, handle reopens, blocking scope and match count, with
-Copy diagnostics, Copy log, Open log folder and Export diagnostics at the top of
-the card. Export writes the same summary as a text file to Documents. Endpoints
-blocked this session sit in their own full-width table with the reason and time,
-so the list can grow without pushing the buttons off screen. Diagnostics has its
-own sidebar entry rather than sitting at the bottom of Settings.
+intercepted rate, handle reopens, scope and match count. Copy diagnostics, Copy
+log, Open log folder and Export diagnostics sit at the top; Export writes the same
+text to Documents. Endpoints blocked this session are in their own full-width
+table with reason and time.
 
-Copy log folds in the previous log file when the current one is short, so a
-session that rolled over is not cut in half. The log records the version and
-settings at startup, the policy each time it loads or saves, every match start
-and end, and each blocked endpoint with its reason, packet count and rate. A
-burst of blocks in under two seconds is collapsed into one matchmaking-scan
-line.
+Copy log includes the previous rotation when the current file is short. The log
+records startup settings, policy loads and saves, match starts and ends, and
+blocked endpoints, with scan bursts collapsed into one line.
 
-Ctrl+1 through Ctrl+6 switch between the six screens, and Ctrl+F focuses the
-search box on Regions or Servers. Ctrl+Alt+P pauses or resumes filtering from
-inside the game, so you do not have to alt-tab.
+Ctrl+1 through Ctrl+6 switch screens, Ctrl+F focuses search, and Ctrl+Alt+P
+toggles filtering without leaving the game.
 
 <a href="docs/screenshots/diagnostics.png"><img src="docs/screenshots/diagnostics.png" alt="Diagnostics screen" width="100%"></a>
 
@@ -225,29 +199,23 @@ outbound packet on the game's ports is checked in this order:
 A denied outbound packet is dropped without a reset. The game sees a dead
 endpoint and picks another one, and the server is never told it was refused.
 
-Only outbound packets are held for a decision. Inbound copies are read in
-sniff mode, which the driver delivers without removing them from the stack, so
-the game's receive path never waits for the app. Earlier builds held traffic in
-both directions, and on busy connections that showed up in game as the packet
-burst indicator and stuttering even when nothing was being blocked.
+Only outbound packets are held for a decision. Inbound copies are read in sniff
+mode, which the driver delivers without removing them, so the game's receive
+path never waits for the app.
 
-Safe scope is the default because matchmaking, lobby and party traffic often
-lands on cloud addresses that no server list contains, and because the game
-pings every candidate datacenter before it picks one. A located server that
-your rules reject is dropped on its first packet, so a datacenter outside your
-regions never answers and never appears as a candidate. Endpoints the catalog
-has not located are only dropped once a flow is busy enough to be an actual
-session, so pixel-thin probes and lobby heartbeats get through. Once a match has
-run on a range, that range is remembered as a game server and gets the same
-first-packet treatment from then on. The search guard timer restarts after a
-minute of quiet, so sitting in the menu does not count as a fruitless search.
-Traffic on the game's own port (3074), Steam networking and relay ports
-(27000-27199) and STUN ports (3478, 4379-4380) is treated as control traffic and
-is not dropped automatically, because that is where lobby, party and relay
-heartbeats live. Provider blocks do not override that either. Your explicit deny
-rules still apply there, and the block button on a match row adds one, so a
-server on 3074 can be rejected by hand. Strict is there if you want the older
-behaviour and do not mind the occasional matchmaking failure.
+Safe scope is the default because lobby and party traffic often uses cloud
+addresses that no server list contains, and because the game pings every
+candidate before choosing. A located server your rules reject is dropped on its
+first packet, so it never answers; an unlocated endpoint is dropped only once a
+flow is busy enough to be a session. A range that hosts a match is remembered
+and treated as a server afterwards, and the search guard timer restarts after a
+minute of quiet.
+
+Traffic on port 3074, Steam networking and relay ports (27000-27199) and STUN
+ports (3478, 4379-4380) is control traffic and is not dropped automatically.
+Provider blocks do not override that, but explicit denies do, including the
+block button on a match. Strict is the older behaviour: drop everything the
+rules reject, at the cost of occasional matchmaking failures.
 
 Auth, lobby, ownership and CDN addresses are resolved at launch and refreshed
 every ten minutes. If one is ever blocked, Diagnostics shows the endpoint and
@@ -291,11 +259,10 @@ Filtering and region selection keep working. Policy editing and export are
 disabled while it is on because the YAML contains your coordinates. Turn streamer
 mode on after setup; the wizard needs your real location.
 
-The app talks to three places, all optional: ipwho.is for location lookups,
-ipwho.is again for newly observed server ranges, and GitHub for the public list
-download. Location lookups also return the network operator for that address,
-which is how the Servers screen knows who hosts it. There is no telemetry and no
-account.
+The app talks to two services, both optional: ipwho.is for location lookups
+(home and newly observed ranges) and GitHub for public list updates. Location
+lookups also return the network operator for that address, which is how the
+Servers screen knows who hosts it. There is no telemetry and no account.
 
 ## Troubleshooting
 
@@ -309,7 +276,7 @@ ignored on purpose. Start the game first; the process list is checked while
 filtering runs, and **Diagnostics** shows which file was matched.
 
 **A game closes or refuses to launch while filtering is on.** Set **Settings ->
-Filtering behaviour -> Attach to the game** to **Immediately** and try again. The
+Compatibility -> Attach to the game** to **Immediately** and try again. The
 default waits for the game's UDP ports to settle so the first packets of a launch
 are not intercepted; a few titles open sockets late. If it still closes, turn on
 **Leave port 3074 alone**, which exempts the main socket the game shares with its
@@ -346,21 +313,14 @@ fails, the error text under **Diagnostics** names the reason; copy it when
 asking for help. Reinstalling fixes a missing driver file. Antivirus software
 that quarantines `WinDivert64.sys` also produces this.
 
-**Two tray icons, or Quit does nothing.** Fixed in 1.0.0: a single-instance mutex
-stops a second copy, and Quit exits on a separate thread so the tray menu cannot
-block it. If an older build is still running, end it once from Task Manager.
-
 ## Limitations
 
 - **Modern Warfare 4 coverage is unverified.** Early sessions will contain
   endpoints the catalog has not located. Safe scope waits for a session before
   dropping those; strict mode blocks them from the first packet.
-- **Safe scope is a trade.** A range that no public list contains and the app has
-  never seen a match on still gets through the first second of traffic, so the
-  game can land on it once. The session is dropped shortly after and the range is
-  remembered, so the same address is refused on its first packet next time. Strict
-  mode refuses it immediately at the cost of breaking matchmaking when it meets an
-  endpoint it does not recognise.
+- **Safe scope is a trade.** A range absent from every list, and never used for a
+  match, can carry the first second of traffic before it is dropped and
+  remembered. Strict refuses it immediately but can break matchmaking.
 - **Provider rules need a provider.** Ranges with no ASN or organisation in the
   bundled lists pass provider rules because there is nothing to compare. Provider
   names are only as accurate as the list snapshot.
@@ -382,10 +342,9 @@ block it. If an older build is still running, end it once from Task Manager.
 ## Why not Windows Firewall
 
 Windows Firewall checks explicit block rules before allow rules, so it cannot say
-"allow these regions and drop everything else" without listing every address to
-block. Server ranges rotate inside cloud providers, which makes a static blocklist
-unreliable. WinDivert can do a real allowlist, and it releases cleanly when the app
-exits.
+"allow these regions and drop the rest" without listing every address to block.
+Cloud ranges rotate, which makes a static blocklist unreliable. WinDivert can do
+a real allowlist and releases cleanly when the app exits.
 
 ## Build from source
 
