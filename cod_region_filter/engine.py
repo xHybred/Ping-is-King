@@ -90,6 +90,8 @@ class Engine:
         self._allowed_total = 0
         self._recent_verdicts: deque[dict] = deque(maxlen=50)
         self._denial_log: dict[str, float] = {}
+        self._index_cache = None
+        self._index_version = -1
         self._match_count = 0
         self._cancelled_total = 0
         self._last_cancelled: dict | None = None
@@ -130,8 +132,34 @@ class Engine:
 
     # -- packet path -----------------------------------------------------
 
-    def observe(self, ip: str, port: int, direction: str, size: int, now: float | None = None) -> dict:
-        """Decide one packet. Called from the capture thread."""
+    def _record(self, ip: str):
+        """Look up a range from the cached index.
+
+        Catalog.index() takes the catalog lock and rebuilds on a data change.
+        Doing that per packet puts the capture thread behind SQLite whenever
+        the catalog moves, which shows up in game as packet bursts.
+        """
+        version = self.catalog.version
+        if self._index_cache is None or self._index_version != version:
+            self._index_cache = self.catalog.index()
+            self._index_version = version
+        return self._index_cache.find(ip)
+
+    def observe(
+        self,
+        ip: str,
+        port: int,
+        direction: str,
+        size: int,
+        now: float | None = None,
+        count: bool = True,
+    ) -> dict:
+        """Decide one packet. Called from the capture thread.
+
+        ``count`` is False for sniffed inbound copies: they feed flow state and
+        RTT but are not enforcement events, so they must not inflate the
+        allowed/denied totals or the denial log.
+        """
         now = now if now is not None else time.monotonic()
         with self._lock:
             key = (ip, port)
@@ -163,7 +191,7 @@ class Engine:
                 flow.verdict = {"allow": True, "reason": "Filtering off", "kind": "off"}
                 return flow.verdict
 
-            rec = self.catalog.index().find(ip)
+            rec = self._record(ip)
             cluster = self.policy._clusters.get(rec.cluster) if rec is not None else None
             unclassified = rec is None or not rec.city
             if self._soft_pinned_ip == ip and unclassified:
@@ -180,6 +208,8 @@ class Engine:
             verdict = self._scope(flow, verdict, now, rec)
 
             flow.verdict = verdict
+            if not count:
+                return verdict
             if verdict["allow"]:
                 self._allowed_total += 1
             else:

@@ -11,11 +11,16 @@ from pathlib import Path
 
 from . import catalog_update, games, geo, paths, policy as policy_mod, services, startup, titlebar
 from .catalog import Catalog, cidr_for
-from .capture import CaptureWorker, available as driver_available, driver_problem
+from .capture import (
+    CaptureWorker,
+    available as driver_available,
+    driver_problem,
+    unload_driver,
+)
 from .engine import Engine
 from .policy import PolicyEngine, parse as parse_policy, dump as dump_policy
 
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.10"
 
 DEFAULT_CONFIG = {
     "filtering": True,
@@ -26,6 +31,8 @@ DEFAULT_CONFIG = {
     "minimize_to_tray": True,
     "streamer_mode": False,
     "theme": "midnight",
+    "attach_mode": "safe",
+    "unload_driver_on_exit": True,
 }
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -114,17 +121,24 @@ class AppState:
         self.engine = Engine(self.catalog, self.policy_engine, self.log)
         self.engine.set_filtering(bool(self.config["filtering"]))
         self.geo = geo.GeoWorker(self._on_geo, self.log)
-        self.capture = CaptureWorker(self.engine, self.log)
+        self.capture = CaptureWorker(
+            self.engine,
+            self.log,
+            attach_mode=self.config.get("attach_mode", "safe"),
+            active=bool(self.config["filtering"]),
+        )
         self.elevated = games.uac_enabled()
         self.driver = driver_available()
         self.game = games.find_game()
         self.policy_error = ""
         self._stop = threading.Event()
+        self._capture_started = False
         self._tick_thread: threading.Thread | None = None
         self._shutdown_lock = threading.Lock()
         self._policy_lock = threading.RLock()
         self._clusters: list[dict] = []
         self._regions: list[dict] = []
+        self._seen_version = -1
         self._catalog_lock = threading.Lock()
         self._catalog_update = {"running": False, "message": "", "report": [], "finished_at": 0.0}
         self.refresh_catalog()
@@ -167,6 +181,7 @@ class AppState:
         self._tick_thread.start()
         if self.driver and self.elevated:
             self.capture.start()
+            self._capture_started = True
 
     def restart_capture(self) -> dict:
         """Recreate the capture worker, e.g. after WinDivert was reinstalled."""
@@ -181,7 +196,12 @@ class AppState:
         old = self.capture
         old.stop()
         old.join(timeout=2)
-        self.capture = CaptureWorker(self.engine, self.log)
+        self.capture = CaptureWorker(
+            self.engine,
+            self.log,
+            attach_mode=self.config.get("attach_mode", "safe"),
+            active=bool(self.config.get("filtering", True)),
+        )
         self.capture.start()
         return {"ok": True}
 
@@ -192,6 +212,12 @@ class AppState:
             self._stop.set()
         self.geo.stop()
         self.capture.stop()
+        if self.capture.is_alive():
+            self.capture.join(timeout=2)
+        if self._capture_started and self.config.get("unload_driver_on_exit", True) and self.elevated:
+            # Leaving the service loaded is what made upgrades fail with
+            # "DeleteFile failed; code 5" on WinDivert64.sys.
+            unload_driver(self.log)
         thread = self._tick_thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=5)
@@ -211,6 +237,7 @@ class AppState:
     def _tick_loop(self) -> None:
         last_flush = 0.0
         last_refresh = 0.0
+        last_geo = 0.0
         last_services = 0.0
         while not self._stop.is_set():
             now = time.monotonic()
@@ -221,9 +248,17 @@ class AppState:
                 # Rebuild on this thread. The capture thread only reads the
                 # index, and rebuilding 6k ranges there stalls re-injection.
                 self.catalog.index()
-            if now - last_refresh > 5.0:
+            if now - last_refresh > 1.0:
                 last_refresh = now
-                self.refresh_catalog()
+                if self.catalog.version != self._seen_version:
+                    # Regrouping clusters and recompiling the policy is a few
+                    # milliseconds of SQLite and dict work. Doing it on a timer
+                    # instead of on change was taking the GIL away from capture
+                    # every five seconds while the game was running.
+                    self._seen_version = self.catalog.version
+                    self.refresh_catalog()
+            if now - last_geo > 5.0:
+                last_geo = now
                 if self.config.get("auto_geolocate", True):
                     self._queue_geo()
             if now - last_services > 600.0:
@@ -242,8 +277,9 @@ class AppState:
 
     def _on_geo(self, cidr: str, result: dict) -> None:
         self.catalog.resolve_location(cidr, result)
+        # Tick picks the version change up and regroups once, instead of
+        # rebuilding clusters for every single lookup result.
         self.catalog.index()
-        self.refresh_catalog()
 
     def refresh_catalog(self) -> None:
         self._clusters = self.catalog.clusters()
@@ -542,6 +578,15 @@ class AppState:
 
         if key == "filtering":
             self.engine.set_filtering(bool(value))
+            if self.capture.is_alive():
+                # Pausing now detaches from the game instead of only changing
+                # verdicts, so a paused app touches no packets at all.
+                if value:
+                    self.capture.resume()
+                else:
+                    self.capture.pause()
+        elif key == "attach_mode":
+            self.capture.set_attach_mode(str(value))
         elif key == "auto_geolocate" and value:
             self._queue_geo()
         return {"ok": True, "config": self.config}
@@ -719,6 +764,17 @@ class AppState:
             self._catalog_update.update(
                 running=False, message=message, report=report, finished_at=time.time()
             )
+
+    def read_log(self, limit: int = 200_000) -> dict:
+        """Tail of app.log, for pasting into a bug report."""
+        path = paths.log_path()
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except FileNotFoundError:
+            return {"ok": False, "error": "No log file yet."}
+        except OSError as exc:
+            return {"ok": False, "error": str(exc)}
+        return {"ok": True, "text": text[-limit:], "path": str(path)}
 
     def export_csv(self) -> dict:
         target = paths.roaming_dir() / "server-catalog.csv"

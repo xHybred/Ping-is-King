@@ -133,7 +133,17 @@ class Catalog:
         self._conn.commit()
         self._pending: dict[str, dict] = {}
         self._index = RangeIndex()
+        self._version = 0
+        self._touch()
+
+    def _touch(self) -> None:
+        """Mark the index stale and bump the version readers cache against."""
         self._index_dirty = True
+        self._version += 1
+
+    @property
+    def version(self) -> int:
+        return self._version
 
     def close(self) -> None:
         with self._lock:
@@ -191,7 +201,7 @@ class Catalog:
                 rows,
             )
             self._conn.commit()
-            self._index_dirty = True
+            self._touch()
 
         community = paths.resource("data/seed_community.json")
         if community.exists():
@@ -246,7 +256,7 @@ class Catalog:
                         (slot["packets"], slot["bytes"], new_rtt, now, cidr),
                     )
             self._conn.commit()
-            self._index_dirty = True
+            self._touch()
 
     def resolve_location(self, cidr: str, geo: dict) -> None:
         if not geo or geo.get("status") != "success":
@@ -268,7 +278,7 @@ class Catalog:
                 ),
             )
             self._conn.commit()
-            self._index_dirty = True
+            self._touch()
 
     def import_geo(self, records: Iterable[dict], source: str, confidence: float) -> int:
         """Merge third-party locations without overwriting better existing data."""
@@ -317,7 +327,7 @@ class Catalog:
                 rows,
             )
             self._conn.commit()
-            self._index_dirty = True
+            self._touch()
         return len(rows)
 
     def mark_service(self, ips: Iterable[str]) -> int:
@@ -337,7 +347,7 @@ class Catalog:
                 )
                 count += 1
             self._conn.commit()
-            self._index_dirty = True
+            self._touch()
         return count
 
     # -- reads -----------------------------------------------------------
@@ -530,4 +540,4 @@ class Catalog:
             self._conn.executescript("DELETE FROM ranges; DELETE FROM matches;")
             self._conn.commit()
             self._pending.clear()
-            self._index_dirty = True
+            self._touch()

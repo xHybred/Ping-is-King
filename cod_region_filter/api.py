@@ -138,6 +138,9 @@ class Api:
     def export_csv(self) -> dict:
         return self.state.export_csv()
 
+    def read_log(self) -> dict:
+        return self.state.read_log()
+
     def export_discovered(self) -> dict:
         return self.state.export_discovered()
 

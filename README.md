@@ -51,7 +51,7 @@ relax the filter rather than leave you searching forever (this can be raised or 
 
 ## Install
 
-1. Download `COD-Ping-King-1.0.8.exe` from the releases page.
+1. Download `COD-Ping-King-1.0.10.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
@@ -140,22 +140,27 @@ catalog refresh. **Minimize to tray** is on by default; turn it off if you want
 the close button to exit. **Start with Windows** registers a logon task that runs
 the app elevated and minimized to the tray; a Run key cannot do that because
 Windows will not show a UAC prompt during sign-in. **Blocking scope** decides how
-aggressive filtering is; see below.
+aggressive filtering is; see below. **Attach to the game** waits until the game
+has stopped opening and closing UDP sockets (about ten seconds after launch)
+before it starts intercepting. **Unload driver on exit** stops the WinDivert
+service when the app quits, so a closed app leaves nothing loaded in the kernel.
 
 <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings screen" width="100%"></a>
 
 ### Diagnostics
 
 Version, elevation, driver state, watched ports, service pins, packet counters,
-blocking scope and match count, plus a list of endpoints blocked this session
-with the reason for each. The buttons copy the summary and open the log folder.
-It sits in the sidebar rather than at the bottom of Settings.
+intercepted packet rate, handle reopens, blocking scope and match count, plus a
+list of endpoints blocked this session with the reason for each. The buttons
+copy the summary, copy the log text, and open the log folder. It sits in the
+sidebar rather than at the bottom of Settings.
 
 <a href="docs/screenshots/diagnostics.png"><img src="docs/screenshots/diagnostics.png" alt="Diagnostics screen" width="100%"></a>
 
 ## How a packet is decided
 
-Every UDP packet on the game's ports is checked in this order:
+Outbound UDP from the game is intercepted; inbound is only sniffed. Every
+outbound packet on the game's ports is checked in this order:
 
 1. **Game service pin** - always allow. Auth, lobby, ownership and CDN.
 2. **Deny rules** - ranges, clusters, regions or countries.
@@ -171,6 +176,12 @@ Every UDP packet on the game's ports is checked in this order:
 
 A denied outbound packet is dropped without a reset. The game sees a dead
 endpoint and picks another one, and the server is never told it was refused.
+
+Only outbound packets are held for a decision. Inbound copies are read in
+sniff mode, which the driver delivers without removing them from the stack, so
+the game's receive path never waits for the app. Earlier builds held traffic in
+both directions, and on busy connections that showed up in game as the packet
+burst indicator and stuttering even when nothing was being blocked.
 
 Safe scope is the default because matchmaking, lobby and party traffic often
 lands on cloud addresses that no server list contains, and because the game
@@ -234,6 +245,12 @@ The installer launches it elevated, but a shortcut you made yourself may not.
 `cod24-cod.exe` or `cod25-cod.exe`. Campaign executables (`sp24-cod.exe`) are
 ignored on purpose. Start the game first; the process list is checked while
 filtering runs, and **Diagnostics** shows which file was matched.
+
+**A game closes or refuses to launch while filtering is on.** Set **Settings ->
+Filtering behaviour -> Attach to the game** to **Immediately** and try again. The
+default waits for the game's UDP ports to settle so the first packets of a launch
+are not intercepted; a few titles open sockets late. If it still closes, quit the
+app (it now unloads the driver) and report which title and where it stopped.
 
 **The wizard recommends nothing.** It needs a home location and at least one
 located cluster. Run **Settings -> Update from public lists**, then try again. A
@@ -344,7 +361,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-1.0.8.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-1.0.10.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 

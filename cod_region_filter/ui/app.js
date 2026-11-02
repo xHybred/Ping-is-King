@@ -263,7 +263,7 @@ const demo = (() => {
 
   const current = {
     remote_ip: "203.0.113.28",
-    port: 3074,
+    port: 30012,
     cidr: "203.0.113.0/24",
     city: "Ashburn",
     region: "Virginia",
@@ -288,8 +288,8 @@ const demo = (() => {
     last_cancelled: null,
     current,
     recent: [
-      { ip: "198.51.100.19", port: 3074, reason: "Not in allowlist", at: "2026-10-30T17:05:12+00:00" },
-      { ip: "203.0.113.28", port: 3074, reason: "Unclassified endpoint blocked", at: "2026-10-30T16:58:03+00:00" },
+      { ip: "198.51.100.19", port: 30012, reason: "Not in allowlist", at: "2026-10-30T17:05:12+00:00" },
+      { ip: "203.0.113.28", port: 44998, reason: "Unclassified endpoint blocked", at: "2026-10-30T16:58:03+00:00" },
     ],
   };
 
@@ -361,7 +361,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "1.0.8",
+        version: "1.0.10",
         elevated: true,
         driver: true,
         driver_error: "",
@@ -378,7 +378,7 @@ soft_mode:
         policy_home: config.streamer_mode
           ? { lat: null, lon: null, label: "Hidden by streamer mode", hidden: true }
           : { ...demoLocation },
-        capture: { available: false, running: false, status: "preview", error: "", pid: 12844, ports: [3074] },
+        capture: { available: false, running: false, status: "preview", error: "", pid: 12844, ports: [30012, 44998], watched: [30012, 44998], attach_mode: "safe", packets: 0, packets_per_second: 0, reopens: 1 },
         summary: summary(),
         catalog_update: { running: false, message: "", report: [], finished_at: 0 },
         state: statePayload(),
@@ -418,7 +418,7 @@ soft_mode:
       return {
         state: statePayload(),
         game: { pid: 12844, name: "cod.exe", exe: "", match: "exact name" },
-        capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [3074] },
+        capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [30012, 44998], watched: [30012, 44998], attach_mode: "safe", packets: 184320, packets_per_second: 62.4, reopens: 1 },
         elevated: true,
         driver: true,
         driver_error: "",
@@ -513,6 +513,7 @@ soft_mode:
       return { ok: true, cidr };
     },
     export_csv() { return { ok: true, path: "%APPDATA%\\cod-ping-king\\server-catalog.csv" }; },
+  read_log() { return { ok: true, text: "2026-11-01 12:00:00 capture open: udp and (udp.SrcPort == 30012)", path: "%LOCALAPPDATA%\\cod-ping-king\\app.log" }; },
     export_policy() { return { ok: true, path: "%USERPROFILE%\\Documents\\cod-ping-king-policy.yaml" }; },
     reset_catalog() { return { ok: true }; },
     update_catalog() { return { ok: true }; },
@@ -570,7 +571,7 @@ function renderChrome(boot) {
   } else if (!s.filtering) {
     setStatus("warn", "Filtering paused", "All servers reachable");
   } else if (game) {
-    setStatus("ok", "Filtering on", "Game detected");
+    setStatus("ok", "Filtering on", capture.status === "waiting for game to settle" ? "Waiting for the game to settle" : "Game detected");
   } else {
     setStatus("ok", "Filtering on", "Waiting for game");
   }
@@ -1038,6 +1039,8 @@ function renderSettings() {
   $("#set-soft-seconds").disabled = !(summary.soft && summary.soft.enabled);
   $("#set-unknown").value = summary.unknown || "allow";
   $("#set-strict").value = summary.strict ? "strict" : "safe";
+  $("#set-attach").value = cfg.attach_mode === "immediate" ? "immediate" : "safe";
+  $("#set-unload").checked = cfg.unload_driver_on_exit !== false;
   $("#set-geo").checked = Boolean(cfg.auto_geolocate);
   $("#show-seed").checked = Boolean(state.showSeed);
 
@@ -1069,13 +1072,16 @@ function renderSettings() {
 
   const st = boot.state || {};
   $("#diag-facts").innerHTML = [
-    ["Watched UDP ports", (capture.ports || []).join(", ") || "None"],
+    ["Watched UDP ports", (capture.watched || capture.ports || []).join(", ") || "None"],
     ["Service endpoints pinned", summary.service_pins || 0],
     ["Policy", `${summary.mode || "?"}, unknown ${summary.unknown || "?"}`],
     ["Blocking scope", summary.strict ? "Strict" : "Safe"],
     ["Allowed / denied packets", `${st.allowed_packets || 0} / ${st.denied_packets || 0}`],
     ["Matches recorded", st.match_count || 0],
     ["Matches cancelled", st.cancelled_total || 0],
+    ["Attach mode", capture.attach_mode === "immediate" ? "Immediately" : "After launch"],
+    ["Intercepted packets", `${(capture.packets || 0).toLocaleString()} (${capture.packets_per_second || 0}/s)`],
+    ["Handle reopens", capture.reopens || 0],
     ["Driver status", capture.status || "unknown"],
   ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join("");
 
@@ -1620,6 +1626,8 @@ function bindEvents() {
   $("#set-soft-seconds").addEventListener("change", (e) => mutate(call("set_soft_mode", $("#set-soft").value !== "off", Number(e.target.value) || 45), "Search guard delay saved"));
   $("#set-unknown").addEventListener("change", (e) => mutate(call("set_unknown", e.target.value), "Unknown endpoint rule saved"));
   $("#set-strict").addEventListener("change", (e) => mutate(call("set_strict", e.target.value === "strict"), e.target.value === "strict" ? "Strict scope saved" : "Safe scope saved"));
+  $("#set-attach").addEventListener("change", (e) => mutate(call("set_setting", "attach_mode", e.target.value), e.target.value === "immediate" ? "Attaching immediately" : "Attaching after launch"));
+  $("#set-unload").addEventListener("change", (e) => mutate(call("set_setting", "unload_driver_on_exit", e.target.checked), e.target.checked ? "Driver unloads on exit" : "Driver stays loaded after exit"));
   $("#update-catalog").addEventListener("click", async () => {
     const result = await call("update_catalog");
     if (!result.ok) {
@@ -1679,6 +1687,15 @@ function bindEvents() {
     toast(ok ? "Diagnostics copied" : "Could not access the clipboard", ok ? "ok" : "bad");
   });
   $("#open-log").addEventListener("click", () => call("open_folder", "log"));
+  $("#copy-log").addEventListener("click", async () => {
+    const result = await call("read_log");
+    if (!result.ok) {
+      toast(result.error || "Could not read the log", "bad");
+      return;
+    }
+    const ok = await copyText(result.text);
+    toast(ok ? "Log copied" : "Could not access the clipboard", ok ? "ok" : "bad");
+  });
 
   $("#driver-retry").addEventListener("click", async () => {
     const result = await call("restart_capture");

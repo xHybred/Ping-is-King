@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COD Ping King</title>
-<link rel="stylesheet" href="styles.css?v=1.0.8">
+<link rel="stylesheet" href="styles.css?v=1.0.10">
 </head>
 <body>
 <div id="app">
@@ -59,7 +59,7 @@
         </div>
       </div>
       <div class="rail-meta">
-        <span id="rail-version">v1.0.8</span>
+        <span id="rail-version">v1.0.10</span>
         <button class="link" id="rail-pause">Pause</button>
       </div>
     </div>
@@ -386,6 +386,7 @@
           </div>
           <div class="button-row">
             <button class="btn btn-small" id="copy-diag">Copy diagnostics</button>
+            <button class="btn btn-small" id="copy-log">Copy log</button>
             <button class="btn btn-small" id="open-log">Open log folder</button>
           </div>
         </article>
@@ -424,6 +425,10 @@
           <div class="setting-row">
             <div><strong>Minimize to tray</strong><span>Closing the window keeps filtering in the background. Quit from the tray menu.</span></div>
             <label class="switch"><input type="checkbox" id="set-tray"><span></span></label>
+          </div>
+          <div class="setting-row">
+            <div><strong>Unload driver on exit</strong><span>Stops the WinDivert service when the app quits so nothing stays in the kernel. It is reinstalled on the next launch.</span></div>
+            <label class="switch"><input type="checkbox" id="set-unload"><span></span></label>
           </div>
         </article>
 
@@ -464,6 +469,13 @@
             <select id="set-strict">
               <option value="safe">Safe</option>
               <option value="strict">Strict</option>
+            </select>
+          </div>
+          <div class="setting-row">
+            <div><strong>Attach to the game</strong><span>Wait for the game to finish opening its sockets before filtering. Choose Immediately only if a game fails to launch with filtering on.</span></div>
+            <select id="set-attach">
+              <option value="safe">After launch</option>
+              <option value="immediate">Immediately</option>
             </select>
           </div>
         </article>
@@ -512,8 +524,8 @@
 </div>
 
 <div class="toast-stack" id="toasts" aria-live="polite"></div>
-<script src="world.js?v=1.0.8"></script>
-<script src="app.js?v=1.0.8"></script>
+<script src="world.js?v=1.0.10"></script>
+<script src="app.js?v=1.0.10"></script>
 </body>
 </html>
 
