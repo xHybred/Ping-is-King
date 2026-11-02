@@ -103,6 +103,32 @@ def test_known_server_range_is_dropped_on_the_first_probe(tmp_path):
     cat.close()
 
 
+def test_known_server_on_a_platform_port_is_still_filtered(tmp_path):
+    cat = Catalog(tmp_path / "known3074.db")
+    cat.import_geo(
+        [{
+            "cidr": "198.51.100.0/24",
+            "city": "Los Angeles",
+            "region": "California",
+            "region_code": "CA",
+            "country": "United States",
+            "country_code": "US",
+            "lat": 34.05,
+            "lon": -118.24,
+        }],
+        "community_geo",
+        0.6,
+    )
+    eng = Engine(cat, PolicyEngine(Policy(allow=AllowSpec(regions=["US-OH"]))))
+    eng.policy.set_clusters(cat.clusters())
+    # Match servers can listen on 3074 too; the platform guard must not give a
+    # listed datacenter a free pass just because the port looks like lobby traffic.
+    verdict = eng.observe("198.51.100.10", 3074, "outbound", 60, now=1000.0)
+    assert verdict["allow"] is False
+    assert verdict["kind"] == "allowlist"
+    cat.close()
+
+
 def test_explicit_deny_applies_immediately_in_safe_scope(tmp_path):
     policy = Policy(allow=AllowSpec(regions=["US-OH"]), deny=DenySpec(cidrs=["198.51.100.0/24"]))
     cat, eng = setup(tmp_path, policy)

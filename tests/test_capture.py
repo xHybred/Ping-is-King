@@ -20,10 +20,16 @@ def test_missing_package_explains_reinstall():
     assert "missing" in driver_problem(status)
 
 
-def test_filter_skips_platform_ports():
+def test_filter_watches_every_game_port_including_3074():
     from cod_region_filter.capture import filter_ports
 
-    assert filter_ports((3074, 27015, 3478, 30012, 44998)) == (30012, 44998)
+    assert filter_ports((3074, 27015, 3478, 30012, 44998)) == (3074, 27015, 3478, 30012, 44998)
+
+
+def test_skip_3074_compatibility_switch():
+    from cod_region_filter.capture import filter_ports
+
+    assert filter_ports((3074, 30012), skip_3074=True) == (30012,)
 
 
 def test_safe_attach_waits_for_stable_ports():

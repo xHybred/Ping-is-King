@@ -20,7 +20,7 @@ from .capture import (
 from .engine import Engine
 from .policy import PolicyEngine, parse as parse_policy, dump as dump_policy
 
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 
 DEFAULT_CONFIG = {
     "filtering": True,
@@ -33,6 +33,7 @@ DEFAULT_CONFIG = {
     "theme": "midnight",
     "attach_mode": "safe",
     "unload_driver_on_exit": True,
+    "skip_3074": False,
 }
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -126,6 +127,7 @@ class AppState:
             self.log,
             attach_mode=self.config.get("attach_mode", "safe"),
             active=bool(self.config["filtering"]),
+            skip_3074=bool(self.config.get("skip_3074", False)),
         )
         self.elevated = games.uac_enabled()
         self.driver = driver_available()
@@ -201,6 +203,7 @@ class AppState:
             self.log,
             attach_mode=self.config.get("attach_mode", "safe"),
             active=bool(self.config.get("filtering", True)),
+            skip_3074=bool(self.config.get("skip_3074", False)),
         )
         self.capture.start()
         return {"ok": True}
@@ -587,6 +590,8 @@ class AppState:
                     self.capture.pause()
         elif key == "attach_mode":
             self.capture.set_attach_mode(str(value))
+        elif key == "skip_3074":
+            self.capture.set_skip_3074(bool(value))
         elif key == "auto_geolocate" and value:
             self._queue_geo()
         return {"ok": True, "config": self.config}

@@ -51,7 +51,7 @@ relax the filter rather than leave you searching forever (this can be raised or 
 
 ## Install
 
-1. Download `COD-Ping-King-1.0.10.exe` from the releases page.
+1. Download `COD-Ping-King-1.0.11.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
@@ -144,6 +144,9 @@ aggressive filtering is; see below. **Attach to the game** waits until the game
 has stopped opening and closing UDP sockets (about ten seconds after launch)
 before it starts intercepting. **Unload driver on exit** stops the WinDivert
 service when the app quits, so a closed app leaves nothing loaded in the kernel.
+**Leave port 3074 alone** stops watching the game's main socket; it exists for a
+title that will not launch with filtering on, and most matches go unfiltered
+while it is set.
 
 <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings screen" width="100%"></a>
 
@@ -189,11 +192,13 @@ pings every candidate datacenter before it picks one. Ranges from the bundled
 server lists are dropped on the first probe, so a datacenter outside your
 regions never answers and never appears as a candidate. Endpoints the catalog
 has not located are only dropped once a flow is busy enough to be an actual
-session, so pixel-thin probes and lobby heartbeats get through. Flows on the
+session, so pixel-thin probes and lobby heartbeats get through. Traffic on the
 game's own port (3074), Steam networking ports (27000-27050) and STUN ports
-(3478, 4379-4380) are treated as control traffic and never counted as a match.
-Your explicit deny rules still apply to them. Strict is there if you want the
-older behaviour and do not mind the occasional matchmaking failure.
+(3478, 4379-4380) is treated as control traffic unless the address is a server
+range from the lists, which still follows your rules, so a match server on 3074
+is filtered like any other. Your explicit deny rules always apply. Strict is
+there if you want the older behaviour and do not mind the occasional
+matchmaking failure.
 
 Auth, lobby, ownership and CDN addresses are resolved at launch and refreshed
 every ten minutes. If one is ever blocked, Diagnostics shows the endpoint and
@@ -249,8 +254,10 @@ filtering runs, and **Diagnostics** shows which file was matched.
 **A game closes or refuses to launch while filtering is on.** Set **Settings ->
 Filtering behaviour -> Attach to the game** to **Immediately** and try again. The
 default waits for the game's UDP ports to settle so the first packets of a launch
-are not intercepted; a few titles open sockets late. If it still closes, quit the
-app (it now unloads the driver) and report which title and where it stopped.
+are not intercepted; a few titles open sockets late. If it still closes, turn on
+**Leave port 3074 alone**, which exempts the main socket the game shares with its
+lobby traffic. Quit the app (it unloads the driver) and report which title and
+where it stopped.
 
 **The wizard recommends nothing.** It needs a home location and at least one
 located cluster. Run **Settings -> Update from public lists**, then try again. A
@@ -361,7 +368,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-1.0.10.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-1.0.11.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 

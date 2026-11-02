@@ -240,7 +240,9 @@ class Engine:
             return verdict
         if verdict.get("kind") == "deny":
             return verdict
-        if is_platform_port(flow.port):
+        if is_platform_port(flow.port) and not (rec is not None and rec.known_server):
+            # Lobby and relay traffic shares these ports with match servers, so
+            # only endpoints the server lists do not name get the free pass.
             return {"allow": True, "reason": "Platform traffic", "kind": "platform"}
         busy = (
             flow.packets >= SESSION_MIN_PACKETS

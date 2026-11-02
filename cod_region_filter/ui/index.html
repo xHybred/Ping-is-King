@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COD Ping King</title>
-<link rel="stylesheet" href="styles.css?v=1.0.10">
+<link rel="stylesheet" href="styles.css?v=1.0.11">
 </head>
 <body>
 <div id="app">
@@ -59,7 +59,7 @@
         </div>
       </div>
       <div class="rail-meta">
-        <span id="rail-version">v1.0.10</span>
+        <span id="rail-version">v1.0.11</span>
         <button class="link" id="rail-pause">Pause</button>
       </div>
     </div>
@@ -478,6 +478,10 @@
               <option value="immediate">Immediately</option>
             </select>
           </div>
+          <div class="setting-row">
+            <div><strong>Leave port 3074 alone</strong><span>Stop watching the game's main socket. Only for a game that refuses to launch while filtering is on; most matches then go unfiltered.</span></div>
+            <label class="switch"><input type="checkbox" id="set-skip3074"><span></span></label>
+          </div>
         </article>
 
         <article class="card">
@@ -524,8 +528,8 @@
 </div>
 
 <div class="toast-stack" id="toasts" aria-live="polite"></div>
-<script src="world.js?v=1.0.10"></script>
-<script src="app.js?v=1.0.10"></script>
+<script src="world.js?v=1.0.11"></script>
+<script src="app.js?v=1.0.11"></script>
 </body>
 </html>
 

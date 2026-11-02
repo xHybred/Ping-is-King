@@ -15,8 +15,6 @@ import threading
 import time
 
 from . import games
-from .engine import is_platform_port
-
 try:
     import pydivert
 except Exception:  # driver package or DLL missing
@@ -40,9 +38,15 @@ def available() -> bool:
     return pydivert is not None
 
 
-def filter_ports(ports) -> tuple[int, ...]:
-    """Ports worth intercepting. Platform traffic is never blocked, so skip it."""
-    return tuple(port for port in ports if not is_platform_port(port))
+def filter_ports(ports, skip_3074: bool = False) -> tuple[int, ...]:
+    """Ports to intercept.
+
+    Every UDP port the game owns is watched. 3074 is the game's main socket,
+    so excluding it here silently stops filtering match traffic; the engine's
+    platform guard is about the remote port, not this one. The skip flag is
+    only for the compatibility switch.
+    """
+    return tuple(port for port in ports if not (skip_3074 and port == 3074))
 
 
 def port_filter(ports, field: str) -> str:
@@ -94,7 +98,14 @@ def driver_problem(status: dict) -> str:
 
 
 class CaptureWorker(threading.Thread):
-    def __init__(self, engine, log=None, attach_mode: str = "safe", active: bool = True) -> None:
+    def __init__(
+        self,
+        engine,
+        log=None,
+        attach_mode: str = "safe",
+        active: bool = True,
+        skip_3074: bool = False,
+    ) -> None:
         super().__init__(name="capture", daemon=True)
         self.engine = engine
         self.log = log or (lambda *_: None)
@@ -115,6 +126,7 @@ class CaptureWorker(threading.Thread):
         self._game: dict | None = None
         self._ports: tuple[int, ...] = ()
         self._attach_mode = "immediate" if attach_mode == "immediate" else "safe"
+        self._skip_3074 = bool(skip_3074)
         self._stable_ports: tuple[int, ...] = ()
         self._stable_since: float | None = None
         self._status = "starting"
@@ -134,7 +146,7 @@ class CaptureWorker(threading.Thread):
             "pids": list(self._pids),
             "game": self._game,
             "ports": list(self._ports),
-            "watched": list(filter_ports(self._ports)),
+            "watched": list(filter_ports(self._ports, self._skip_3074)),
             "attach_mode": self._attach_mode,
             "packets": self._packets,
             "packets_per_second": rate,
@@ -157,6 +169,9 @@ class CaptureWorker(threading.Thread):
         self._attach_mode = "immediate" if mode == "immediate" else "safe"
         self._stable_since = None
         self._stable_ports = ()
+
+    def set_skip_3074(self, skip: bool) -> None:
+        self._skip_3074 = bool(skip)
 
     def _close_handle(self) -> None:
         handle, self._handle = self._handle, None
@@ -229,7 +244,7 @@ class CaptureWorker(threading.Thread):
                 self._close_sniff()
                 self._stop.wait(0.3)
                 continue
-            ports = filter_ports(self._ports)
+            ports = filter_ports(self._ports, self._skip_3074)
             if not ports:
                 self._stop.wait(0.5)
                 continue
@@ -284,7 +299,7 @@ class CaptureWorker(threading.Thread):
                 continue
 
             self._refresh_target()
-            ports = filter_ports(self._ports)
+            ports = filter_ports(self._ports, self._skip_3074)
             if not self._ports:
                 self._close_handle()
                 self._stop.wait(2.0)

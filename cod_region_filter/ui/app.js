@@ -254,6 +254,9 @@ const demo = (() => {
     wizard_done: !new URLSearchParams(location.search).has("wizard"),
     minimize_to_tray: true,
     streamer_mode: false,
+    attach_mode: "safe",
+    unload_driver_on_exit: true,
+    skip_3074: false,
     theme: DEMO_PARAM
       ? new URLSearchParams(location.search).get("theme") || "midnight"
       : "midnight",
@@ -361,7 +364,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "1.0.10",
+        version: "1.0.11",
         elevated: true,
         driver: true,
         driver_error: "",
@@ -378,7 +381,7 @@ soft_mode:
         policy_home: config.streamer_mode
           ? { lat: null, lon: null, label: "Hidden by streamer mode", hidden: true }
           : { ...demoLocation },
-        capture: { available: false, running: false, status: "preview", error: "", pid: 12844, ports: [30012, 44998], watched: [30012, 44998], attach_mode: "safe", packets: 0, packets_per_second: 0, reopens: 1 },
+        capture: { available: false, running: false, status: "preview", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], attach_mode: "safe", packets: 0, packets_per_second: 0, reopens: 1 },
         summary: summary(),
         catalog_update: { running: false, message: "", report: [], finished_at: 0 },
         state: statePayload(),
@@ -418,7 +421,7 @@ soft_mode:
       return {
         state: statePayload(),
         game: { pid: 12844, name: "cod.exe", exe: "", match: "exact name" },
-        capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [30012, 44998], watched: [30012, 44998], attach_mode: "safe", packets: 184320, packets_per_second: 62.4, reopens: 1 },
+        capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], attach_mode: "safe", packets: 184320, packets_per_second: 62.4, reopens: 1 },
         elevated: true,
         driver: true,
         driver_error: "",
@@ -1041,6 +1044,7 @@ function renderSettings() {
   $("#set-strict").value = summary.strict ? "strict" : "safe";
   $("#set-attach").value = cfg.attach_mode === "immediate" ? "immediate" : "safe";
   $("#set-unload").checked = cfg.unload_driver_on_exit !== false;
+  $("#set-skip3074").checked = Boolean(cfg.skip_3074);
   $("#set-geo").checked = Boolean(cfg.auto_geolocate);
   $("#show-seed").checked = Boolean(state.showSeed);
 
@@ -1628,6 +1632,7 @@ function bindEvents() {
   $("#set-strict").addEventListener("change", (e) => mutate(call("set_strict", e.target.value === "strict"), e.target.value === "strict" ? "Strict scope saved" : "Safe scope saved"));
   $("#set-attach").addEventListener("change", (e) => mutate(call("set_setting", "attach_mode", e.target.value), e.target.value === "immediate" ? "Attaching immediately" : "Attaching after launch"));
   $("#set-unload").addEventListener("change", (e) => mutate(call("set_setting", "unload_driver_on_exit", e.target.checked), e.target.checked ? "Driver unloads on exit" : "Driver stays loaded after exit"));
+  $("#set-skip3074").addEventListener("change", (e) => mutate(call("set_setting", "skip_3074", e.target.checked), e.target.checked ? "Port 3074 left alone" : "Port 3074 watched"));
   $("#update-catalog").addEventListener("click", async () => {
     const result = await call("update_catalog");
     if (!result.ok) {
