@@ -2,18 +2,18 @@
   <img src="docs/brand/banner.png" alt="COD Ping King" width="100%">
 </p>
 
-# COD Ping King
+# COD Ping King (PiK)
 
 **Ping is King**
 
 I built this because the game kept putting me on servers I did not want, and
-there was no setting to tell it otherwise. It is a packet filter for Call of Duty
-on Windows: you choose the regions you are willing to play on, and traffic to
+there was no setting to change that. COD Ping King (PiK) filters Call of Duty's
+UDP traffic on Windows: you choose the regions you will play on, and traffic to
 everything else is dropped.
 
 It is not a VPN, and it does not modify the game or read its memory. It watches
-the game's UDP traffic with WinDivert, works out which server the match is using,
-and drops packets to servers outside your rules.
+the game's sockets with WinDivert, works out which server a match is using, and
+drops the rest.
 
 <p align="center">
   <a href="docs/screenshots/dashboard.png"><img src="docs/screenshots/dashboard.png" alt="Dashboard showing the current match and recent servers" width="100%"></a>
@@ -22,8 +22,8 @@ and drops packets to servers outside your rules.
 ## What it does
 
 - Allow or block regions and cities, or set a radius around your home.
-- Block a match's server with one click. It joins the deny list as a /24 and
-  applies to the next search.
+- Block a match's server with one click. It becomes a /24 deny rule and applies
+  to the next search.
 - Authentication, lobby, ownership and CDN endpoints are always allowed and stay
   out of the server lists.
 - Streamer mode hides your location and server addresses for screenshots and
@@ -31,13 +31,13 @@ and drops packets to servers outside your rules.
 
 It does not change how the game rates you, only which servers are reachable. If
 your bracket has nobody nearby, the search guard relaxes the filter instead of
-leaving you searching; you can raise or disable it in Settings.
+leaving you searching; you can raise the delay or turn it off in Settings.
 
 ## Requirements
 
 - Windows 10 or 11, 64-bit.
 - WebView2. Windows 11 ships with it; on Windows 10 it usually arrives with Edge.
-  The installer offers it if it is missing.
+  If the window opens blank, install the WebView2 Runtime from Microsoft.
 - Administrator rights. The packet driver needs them, and the app asks on launch.
 - Call of Duty installed. Any title from Modern Warfare (2019) onward: the app
   matches `cod.exe` as well as prefixed builds such as `cod25-cod.exe`, so a
@@ -50,8 +50,8 @@ leaving you searching; you can raise or disable it in Settings.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
 
-The app installs to `Program Files\COD Ping King`. Your settings, policy and
-catalog live in your Windows user profile, so reinstalling does not wipe them.
+The app installs to `Program Files\COD Ping King`. Settings, policy and catalog
+live in your Windows user profile, so reinstalling keeps them.
 
 ## Setup, step by step
 
@@ -70,7 +70,8 @@ Without elevation it can still watch traffic, but it cannot filter.
 ### 2. Set your home location
 
 Click **Detect location**, or click your area on the map. The radius and the
-recommendations measure from here; you can change or reset it later on Regions.
+recommendations measure from this point. You can change or reset it later on
+Regions.
 
 <a href="docs/screenshots/setup-2.png"><img src="docs/screenshots/setup-2.png" alt="Setup step 2: home location" width="100%"></a>
 
@@ -92,11 +93,11 @@ Start the game and play a match.
 
 ### Dashboard
 
-Shows filtering state, the current server with its city and provider, the
-deciding rule, latency and traffic, and recent matches. Latency is an estimate
-from reply timing: a server cannot reply faster than its tick rate, so the number
-bottoms out near 16 ms even when the route is longer. **Block** adds a match's
-server to the deny list; the same button turns into **Unblock**.
+The dashboard shows filtering state, the current server with its city and
+provider, the deciding rule, latency and traffic, and recent matches. Latency is
+an estimate from reply timing. A server cannot reply faster than its tick rate,
+so the number bottoms out near 16 ms even when the route is longer. **Block** adds
+a match's server to the deny list; the same button turns into **Unblock**.
 
 ### Regions
 
@@ -113,16 +114,17 @@ card both show which mode you are in.
 
 ### Servers
 
-Everything the app has seen or imported: city, provider, region, ping, bytes,
-verdict and when it was last seen. Search by city, address or provider, filter by
-verdict, sort any column. The CSV export contains the same rows.
+This lists everything the app has seen or imported: city, provider, region,
+ping, bytes, verdict and when it was last seen. Search by city, address or
+provider, filter by verdict, sort any column. The CSV export contains the same
+rows.
 
 The **Providers** card groups the catalog by hosting company, with server count,
 regions covered, observed ping and traffic. Each row can be **No rule**, **Allow
-only** or **Block**. A provider rule narrows the regions you already allow and
-never widens them; a block beats an allow. Ranges with no provider pass, game
-services ignore provider rules, and so does Steam relay traffic, since a block can
-otherwise strand a lobby on "Waiting for relay".
+only** or **Block**. A provider rule narrows the regions you already allow; it
+does not widen them, and a block beats an allow. Ranges with no provider pass.
+Game services ignore provider rules, and so does Steam relay traffic, since a
+block can otherwise leave a lobby on "Waiting for relay".
 
 <a href="docs/screenshots/servers.png"><img src="docs/screenshots/servers.png" alt="Servers screen" width="100%"></a>
 
@@ -136,41 +138,40 @@ imported under Settings.
 
 ### Settings
 
-Grouped by what the setting is for.
+**Interface** has theme, window behaviour and streamer mode. **Minimize to tray**
+is on by default; turn it off if the close button should exit.
 
-**Interface** holds theme, window behaviour and streamer mode. **Minimize to
-tray** is on by default; turn it off if the close button should exit.
+**Startup** registers a logon task that runs elevated and minimized. A Run key
+cannot show a UAC prompt at sign-in, so the task is the only way to start hidden.
 
-**Startup** registers a logon task that runs elevated and minimized, because a
-Run key cannot show a UAC prompt at sign-in.
-
-**Filtering** holds search guard, its delay and the unclassified endpoint rule.
-**Reset filtering options** restores those plus blocking scope. **Blocking
-scope** is under Advanced because Strict can break matchmaking: Safe drops
-listed servers on first contact, Strict drops anything the rules reject.
+**Filtering** has the search guard, its delay and the rule for unclassified
+endpoints. **Reset filtering options** restores those and the blocking scope.
+**Blocking scope** sits under Advanced because Strict can break matchmaking:
+Safe drops listed servers on first contact, Strict drops anything the rules
+reject.
 
 **Compatibility** is for titles that misbehave. **Attach to the game** waits for
-UDP sockets to settle (about ten seconds after launch) before intercepting; the
+UDP sockets to settle before intercepting, about ten seconds after launch; the
 wait happens once per launch. **Unload driver on exit** stops the WinDivert
 service on quit. **Leave port 3074 alone**, under Advanced, stops watching the
 main socket and leaves most matches unfiltered.
 
-**Rules and data** combines policy export/import with catalog refresh, CSV and
-discovered-server export, the data folder and catalog reset.
+**Rules and data** combines policy export and import with catalog refresh, CSV
+and discovered-server export, the data folder and catalog reset.
 
 <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings screen" width="100%"></a>
 
 ### Diagnostics
 
-Version, elevation, driver state, watched ports, service pins, packet counters,
-intercepted rate, handle reopens, scope and match count. Copy diagnostics, Copy
-log, Open log folder and Export diagnostics sit at the top; Export writes the same
-text to Documents. Endpoints blocked this session are in their own full-width
-table with reason and time.
+Diagnostics lists version, elevation, driver state,
+watched ports, service pins, packet counters, intercepted rate, handle reopens,
+scope and match count. Copy diagnostics, Copy log, Open log folder and Export
+diagnostics sit at the top; Export writes the same text to Documents. Endpoints
+blocked this session are in their own table with reason and time.
 
-Copy log includes the previous rotation when the current file is short. The log
-records startup settings, policy loads and saves, match starts and ends, and
-blocked endpoints, with scan bursts collapsed into one line.
+The log records startup settings, policy loads and saves, match starts and ends,
+and blocked endpoints. Scan bursts are collapsed into one line, and Copy log
+includes the previous rotation when the current file is short.
 
 Ctrl+1 through Ctrl+6 switch screens, Ctrl+F focuses search, and Ctrl+Alt+P
 toggles filtering without leaving the game.
@@ -201,15 +202,15 @@ endpoint and picks another one, and the server is never told it was refused.
 
 Only outbound packets are held for a decision. Inbound copies are read in sniff
 mode, which the driver delivers without removing them, so the game's receive
-path never waits for the app.
+path never waits for the app. The sniffer closes while a match is live and
+resumes when it ends, which keeps the packet path light.
 
 Safe scope is the default because lobby and party traffic often uses cloud
 addresses that no server list contains, and because the game pings every
 candidate before choosing. A located server your rules reject is dropped on its
-first packet, so it never answers; an unlocated endpoint is dropped only once a
-flow is busy enough to be a session. A range that hosts a match is remembered
-and treated as a server afterwards, and the search guard timer restarts after a
-minute of quiet.
+first packet, so it never answers. An unlocated endpoint is dropped only once a
+flow looks like a real session. A range that hosts a match is remembered as a
+server, and the search guard timer restarts after a minute of quiet.
 
 Traffic on port 3074, Steam networking and relay ports (27000-27199) and STUN
 ports (3478, 4379-4380) is control traffic and is not dropped automatically.
@@ -235,7 +236,7 @@ you allow or deny.
 
 cod-server-list also records the ASN and organisation for each address, so most
 ranges arrive with a provider attached. Geomate only carries an organisation name
-from the original lookup. Both are collapsed onto the four families that host
+from the original lookup. Names are collapsed onto the four families that host
 most Call of Duty servers (Google Cloud, Microsoft Azure, Amazon Web Services,
 Vultr) plus the smaller hosts that appear in the lists.
 
@@ -315,9 +316,9 @@ that quarantines `WinDivert64.sys` also produces this.
 
 ## Limitations
 
-- **Modern Warfare 4 coverage is unverified.** Early sessions will contain
-  endpoints the catalog has not located. Safe scope waits for a session before
-  dropping those; strict mode blocks them from the first packet.
+- **Coverage varies by title.** The newest release will have endpoints the
+  catalog has not located yet. Safe scope waits for a session before dropping
+  those; strict mode blocks them from the first packet.
 - **Safe scope is a trade.** A range absent from every list, and never used for a
   match, can carry the first second of traffic before it is dropped and
   remembered. Strict refuses it immediately but can break matchmaking.
@@ -431,12 +432,16 @@ cod_region_filter/
   capture.py   WinDivert capture and verdict enforcement
   catalog.py   SQLite range catalog and clustering
   catalog_update.py  public list download and parsing
-  engine.py    flow tracking, match detection, soft mode
-  geo.py       HTTPS geolocation
+  engine.py    flow tracking, match detection, search guard
   games.py     process and UDP port discovery
+  geo.py       HTTPS geolocation
+  hotkey.py    global pause shortcut
+  paths.py     per-user data locations and migration
   policy.py    YAML policy and evaluation
   services.py  service endpoint resolution
+  startup.py   logon task registration
   state.py     application state
+  titlebar.py  native title bar colours
   tray.py      system tray icon and menu
   ui/          HTML/CSS/JS interface
 data/          seed ranges and community list
