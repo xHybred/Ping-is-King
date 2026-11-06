@@ -193,12 +193,12 @@ def test_fresh_install_blocks_nothing():
     assert eng.summary()["empty_allowlist"] is False
 
 
-def test_strict_scope_round_trips_and_defaults_safe():
+def test_strict_is_read_from_old_policies_but_not_written():
     p, errors = parse("mode: allowlist\nunknown: deny\nstrict: true\n")
     assert errors == [] and p is not None and p.strict is True
-    assert "strict: true" in dump(p)
-    p2, errors = parse("mode: allowlist\n")
-    assert errors == [] and p2.strict is False
+    assert "strict" not in dump(p)
+    p2, errors = parse(dump(p))
+    assert errors == [] and p2 is not None and p2.strict is False
     assert default_policy().strict is False
 
 

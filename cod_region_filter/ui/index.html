@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COD Ping King</title>
-<link rel="stylesheet" href="styles.css?v=1.3.4">
+<link rel="stylesheet" href="styles.css?v=2.0.3">
 </head>
 <body>
 <div id="app">
@@ -55,11 +55,11 @@
         <span class="dot" id="rail-dot"></span>
         <div>
           <strong id="rail-status-text">Starting</strong>
-          <span id="rail-status-sub">Checking driver</span>
+          <span id="rail-status-sub">Checking capture</span>
         </div>
       </div>
       <div class="rail-meta">
-        <span id="rail-version">v1.3.4</span>
+        <span id="rail-version">v2.0.3</span>
         <button class="link" id="rail-pause">Pause</button>
       </div>
     </div>
@@ -89,10 +89,10 @@
 
     <div class="banner banner-warn" id="driver-banner" hidden>
       <div>
-        <strong>Packet driver unavailable.</strong>
-        <span id="driver-banner-text">WinDivert could not start, so filtering is off.</span>
+        <strong>Traffic capture unavailable.</strong>
+        <span id="driver-banner-text">Windows could not start traffic capture, so filtering is off.</span>
       </div>
-      <button class="btn btn-small" id="driver-retry">Retry driver</button>
+      <button class="btn btn-small" id="driver-retry">Retry capture</button>
     </div>
 
     <div class="banner banner-info" id="setup-banner" hidden>
@@ -148,7 +148,7 @@
         <article class="card stat">
           <span class="stat-label">Traffic</span>
           <div class="stat-value" id="stat-denied">0</div>
-          <span class="stat-sub" id="stat-denied-sub">0 allowed</span>
+          <span class="stat-sub" id="stat-denied-sub">0 in policy</span>
         </article>
       </div>
 
@@ -384,8 +384,8 @@
           <div class="card-head"><div><h2>Application</h2><p>Version and environment.</p></div></div>
           <dl class="kv compact" id="app-facts"></dl>
           <p class="fineprint">
-            Filtering works by dropping game packets at the Windows packet layer. It does not modify
-            the game or its memory. Call of Duty's terms give Activision the right to restrict
+            Filtering works by adding Windows Firewall block rules for game traffic. It does not
+            modify the game or its memory. Call of Duty's terms give Activision the right to restrict
             network manipulation, so use this at your own risk.
           </p>
           <div class="button-row">
@@ -404,7 +404,7 @@
           </div>
           <dl class="kv compact" id="diag-facts"></dl>
           <div id="driver-error-wrap" hidden>
-            <h3>Driver error</h3>
+            <h3>Capture error</h3>
             <p class="hint" id="driver-error-text"></p>
             <div class="button-row">
               <button class="btn btn-small" id="copy-driver-error">Copy error</button>
@@ -415,9 +415,9 @@
 
       <article class="card">
         <div class="card-head">
-          <div><h2>Recently blocked</h2><p>Endpoints dropped this session, with the rule that did it. <span id="blocked-count"></span></p></div>
+          <div><h2>Recently outside policy</h2><p>Endpoints your rules rejected this session. Windows Firewall blocks new connections to them. <span id="blocked-count"></span></p></div>
         </div>
-        <p class="hint" id="blocked-empty">Nothing blocked in this session.</p>
+        <p class="hint" id="blocked-empty">Nothing outside policy in this session.</p>
         <div class="table-wrap scroll-box" id="blocked-wrap" hidden>
           <table class="table" id="blocked-table">
             <thead><tr><th>Endpoint</th><th>Reason</th><th>When</th></tr></thead>
@@ -490,38 +490,6 @@
           <div class="button-row">
             <button class="btn btn-small" id="reset-filtering">Reset filtering options</button>
           </div>
-          <details class="advanced">
-            <summary>Advanced</summary>
-            <div class="setting-row">
-              <div><strong>Blocking scope</strong><span>Safe drops listed servers and live sessions. Strict drops every endpoint outside your rules, including matchmaking and lobby traffic it does not recognise.</span></div>
-              <select id="set-strict">
-                <option value="safe">Safe</option>
-                <option value="strict">Strict</option>
-              </select>
-            </div>
-          </details>
-        </article>
-
-        <article class="card">
-          <div class="card-head"><div><h2>Compatibility</h2><p>Only change these if a game misbehaves.</p></div></div>
-          <div class="setting-row">
-            <div><strong>Attach to the game</strong><span>Wait for the game to finish opening its sockets before filtering. Choose Immediately only if a game fails to launch with filtering on.</span></div>
-            <select id="set-attach">
-              <option value="safe">After launch</option>
-              <option value="immediate">Immediately</option>
-            </select>
-          </div>
-          <div class="setting-row">
-            <div><strong>Unload driver on exit</strong><span>Stops the WinDivert service when the app quits so nothing stays in the kernel. It is reinstalled on the next launch.</span></div>
-            <label class="switch"><input type="checkbox" id="set-unload"><span></span></label>
-          </div>
-          <details class="advanced">
-            <summary>Advanced</summary>
-            <div class="setting-row">
-              <div><strong>Leave port 3074 alone</strong><span>Stop watching the game's main socket. Most matches then go unfiltered.</span></div>
-              <label class="switch"><input type="checkbox" id="set-skip3074"><span></span></label>
-            </div>
-          </details>
         </article>
 
         <article class="card card-wide">
@@ -574,10 +542,14 @@
 </div>
 
 <div class="toast-stack" id="toasts" aria-live="polite"></div>
-<script src="world.js?v=1.3.4"></script>
-<script src="app.js?v=1.3.4"></script>
+<script src="world.js?v=2.0.3"></script>
+<script src="app.js?v=2.0.3"></script>
 </body>
 </html>
+
+
+
+
 
 
 

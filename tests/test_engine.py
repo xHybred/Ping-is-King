@@ -32,8 +32,8 @@ def setup(tmp_path, policy=None):
 
 
 def test_located_outside_allowlist_is_denied(tmp_path):
-    cat, eng = setup(tmp_path, Policy(allow=AllowSpec(regions=["US-OH"]), strict=True))
-    verdict = eng.observe("198.51.100.10", 3074, "outbound", 200, now=1000.0)
+    cat, eng = setup(tmp_path, Policy(allow=AllowSpec(regions=["US-OH"])))
+    verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=1000.0)
     assert verdict["allow"] is False
     cat.close()
 
@@ -271,6 +271,42 @@ def test_match_detection_records_best_flow(tmp_path):
     cat.close()
 
 
+def test_match_record_is_written_outside_the_engine_lock(tmp_path):
+    cat, eng = setup(tmp_path)
+    t = 1000.0
+    for _ in range(45):
+        eng.observe("203.0.113.10", 30000, "outbound", 200, now=t)
+        eng.observe("203.0.113.10", 30000, "inbound", 400, now=t + 0.02)
+        t += 0.1
+    eng.tick(t + 0.6)
+    assert eng.current_match() is not None
+
+    class Watcher:
+        recorded = 0
+        lock_free = None
+
+        def index(self):
+            return self
+
+        def find(self, ip):
+            return None
+
+        def record_match(self, match):
+            self.recorded += 1
+            got = eng._lock.acquire(blocking=False)
+            self.lock_free = got
+            if got:
+                eng._lock.release()
+
+    watcher = Watcher()
+    eng.catalog = watcher
+    eng.tick(t + MATCH_IDLE_END_S + 1)
+    assert watcher.recorded == 1
+    assert watcher.lock_free is True
+    cat.close()
+
+
+
 def test_short_flow_is_not_a_match(tmp_path):
     cat, eng = setup(tmp_path)
     eng.observe("203.0.113.10", 3074, "outbound", 200, now=1000.0)
@@ -297,7 +333,6 @@ def test_soft_mode_never_admits_located_denied_server(tmp_path):
         allow=AllowSpec(regions=["US-OH"]),
         unknown="deny",
         soft_mode=SoftMode(enabled=True, relax_after_s=20),
-        strict=True,
     )
     cat, eng = setup(tmp_path, policy)
     eng._searching_since = 0.0
@@ -328,11 +363,10 @@ def test_soft_mode_disabled_keeps_blocking(tmp_path):
         allow=AllowSpec(regions=["US-OH"]),
         unknown="deny",
         soft_mode=SoftMode(enabled=False),
-        strict=True,
     )
     cat, eng = setup(tmp_path, policy)
     eng._searching_since = 0.0
-    verdict = eng.observe("192.0.2.55", 30000, "outbound", 200, now=1000.0)
+    verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=1000.0)
     assert verdict["allow"] is False
     cat.close()
 
@@ -360,12 +394,48 @@ def test_soft_pin_holds_unclassified_endpoint_for_match(tmp_path):
 
 
 def test_state_reports_counters(tmp_path):
-    cat, eng = setup(tmp_path, Policy(allow=AllowSpec(regions=["US-OH"]), strict=True))
-    eng.observe("203.0.113.10", 3074, "outbound", 200, now=1000.0)
-    eng.observe("198.51.100.10", 3074, "outbound", 200, now=1000.0)
+    cat, eng = setup(tmp_path, Policy(allow=AllowSpec(regions=["US-OH"])))
+    eng.observe("203.0.113.10", 30000, "outbound", 200, now=1000.0)
+    eng.observe("198.51.100.10", 30000, "outbound", 200, now=1000.0)
     state = eng.state()
     assert state["filtering"] is True
     assert state["allowed_packets"] == 1
     assert state["denied_packets"] == 1
     assert len(state["recent"]) == 1
+    cat.close()
+
+
+def test_current_match_does_not_read_the_catalog(tmp_path):
+    cat, eng = setup(tmp_path)
+    t = 1000.0
+    for _ in range(45):
+        eng.observe("203.0.113.10", 30000, "outbound", 200, now=t)
+        eng.observe("203.0.113.10", 30000, "inbound", 400, now=t + 0.02)
+        t += 0.1
+    eng.tick(t + 0.6)
+    assert eng.current_match()["city"] == "Columbus"
+
+    class NoRead:
+        def index(self):
+            raise AssertionError("current_match read the catalog")
+
+    eng.catalog = NoRead()
+    current = eng.current_match()
+    assert current["city"] == "Columbus"
+    assert current["region_key"] == "US-OH"
+    cat.close()
+
+
+def test_match_duration_starts_when_the_match_is_detected(tmp_path):
+    cat, eng = setup(tmp_path)
+    t = 1000.0
+    for _ in range(45):
+        eng.observe("203.0.113.10", 30000, "outbound", 200, now=t)
+        eng.observe("203.0.113.10", 30000, "inbound", 400, now=t + 0.02)
+        t += 0.1
+    detected = t + 0.6
+    eng.tick(detected)
+    eng.tick(detected + MATCH_IDLE_END_S + 0.5)
+    match = cat.matches()[0]
+    assert match["duration_s"] <= MATCH_IDLE_END_S + 1
     cat.close()

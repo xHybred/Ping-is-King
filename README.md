@@ -11,9 +11,9 @@ there was no setting to change that. COD Ping King (PiK) filters Call of Duty's
 UDP traffic on Windows: you choose the regions you will play on, and traffic to
 everything else is dropped.
 
-It is not a VPN, and it does not modify the game or read its memory. It watches
-the game's sockets with WinDivert, works out which server a match is using, and
-drops the rest.
+It is not a VPN, and it does not modify the game or read its memory. It observes
+the game's network traffic with ETW and blocks server ranges you do not want with
+Windows Firewall rules. There is no kernel driver and no packet interception.
 
 <p align="center">
   <a href="docs/screenshots/dashboard.png"><img src="docs/screenshots/dashboard.png" alt="Dashboard showing the current match and recent servers" width="100%"></a>
@@ -38,14 +38,15 @@ leaving you searching; you can raise the delay or turn it off in Settings.
 - Windows 10 or 11, 64-bit.
 - WebView2. Windows 11 ships with it; on Windows 10 it usually arrives with Edge.
   If the window opens blank, install the WebView2 Runtime from Microsoft.
-- Administrator rights. The packet driver needs them, and the app asks on launch.
+- Administrator rights. Windows Firewall rules and traffic observation need
+  them, and the app asks on launch.
 - Call of Duty installed. Any title from Modern Warfare (2019) onward: the app
-  matches `cod.exe` as well as prefixed builds such as `cod25-cod.exe`, so a
-  renamed executable is still detected.
+  matches `cod.exe`, `vanguard.exe` and prefixed builds such as `cod25-cod.exe`,
+  so a renamed executable is still detected.
 
 ## Install
 
-1. Download `COD-Ping-King-1.3.4.exe` from the releases page.
+1. Download `COD-Ping-King-2.0.3.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
@@ -59,8 +60,8 @@ Click any screenshot to open the full-resolution version.
 
 ### 1. Check the basics
 
-The first screen confirms that the app is running elevated, that the packet
-driver loaded, and that the catalog is ready.
+The first screen confirms that the app is running elevated, that traffic capture
+started, and that the catalog is ready.
 
 <a href="docs/screenshots/setup-1.png"><img src="docs/screenshots/setup-1.png" alt="Setup step 1: game, administrator and catalog checks" width="100%"></a>
 
@@ -145,16 +146,7 @@ is on by default; turn it off if the close button should exit.
 cannot show a UAC prompt at sign-in, so the task is the only way to start hidden.
 
 **Filtering** has the search guard, its delay and the rule for unclassified
-endpoints. **Reset filtering options** restores those and the blocking scope.
-**Blocking scope** sits under Advanced because Strict can break matchmaking:
-Safe drops listed servers on first contact, Strict drops anything the rules
-reject.
-
-**Compatibility** is for titles that misbehave. **Attach to the game** waits for
-UDP sockets to settle before intercepting, about ten seconds after launch; the
-wait happens once per launch. **Unload driver on exit** stops the WinDivert
-service on quit. **Leave port 3074 alone**, under Advanced, stops watching the
-main socket and leaves most matches unfiltered.
+endpoints. **Reset filtering options** restores both.
 
 **Rules and data** combines policy export and import with catalog refresh, CSV
 and discovered-server export, the data folder and catalog reset.
@@ -163,14 +155,14 @@ and discovered-server export, the data folder and catalog reset.
 
 ### Diagnostics
 
-Diagnostics lists version, elevation, driver state,
-watched ports, service pins, packet counters, intercepted rate, handle reopens,
-scope and match count. Copy diagnostics, Copy log, Open log folder and Export
+Diagnostics lists version, elevation, traffic capture state,
+watched ports, firewall rule count, observed packet rate, service pins, scope and
+match count. Copy diagnostics, Copy log, Open log folder and Export
 diagnostics sit at the top; Export writes the same text to Documents. Endpoints
-blocked this session are in their own table with reason and time.
+outside policy this session are in their own table with reason and time.
 
 The log records startup settings, policy loads and saves, match starts and ends,
-and blocked endpoints. Scan bursts are collapsed into one line, and Copy log
+and endpoints outside policy. Scan bursts are collapsed into one line, and Copy log
 includes the previous rotation when the current file is short.
 
 Ctrl+1 through Ctrl+6 switch screens, Ctrl+F focuses search, and Ctrl+Alt+P
@@ -178,10 +170,14 @@ toggles filtering without leaving the game.
 
 <a href="docs/screenshots/diagnostics.png"><img src="docs/screenshots/diagnostics.png" alt="Diagnostics screen" width="100%"></a>
 
-## How a packet is decided
+## How a server is blocked
 
-Outbound UDP from the game is intercepted; inbound is only sniffed. Every
-outbound packet on the game's ports is checked in this order:
+The app does not intercept packets. It observes UDP sends and receives from the
+game with ETW, the same event source Windows uses for its own network counters,
+and enforces the policy with outbound Windows Firewall rules scoped to the game
+executable.
+
+Every endpoint is classified in this order:
 
 1. **Game service pin** - always allow. Auth, lobby, ownership and CDN.
 2. **Deny rules** - ranges, clusters, regions, countries or providers.
@@ -192,45 +188,38 @@ outbound packet on the game's ports is checked in this order:
 6. **Radius** - clusters inside the circle around home.
 7. **Ping limit** - optional maximum estimated RTT.
 8. **Default** - allow or deny endpoints that are not in the catalog.
-9. **Scope** - safe scope drops any located server the rules reject at the first
-   packet, waits for a session before dropping endpoints the catalog has not
-   located, and never treats platform traffic as a match. Strict drops anything
-   the rules reject.
 
-A denied outbound packet is dropped without a reset. The game sees a dead
-endpoint and picks another one, and the server is never told it was refused.
+The catalog is grouped into clusters. Each time the policy or catalog changes,
+the app rebuilds block rules for every cluster the rules reject. The rules are
+UDP only, apply only to the game's process, and cover the /24 ranges in that
+cluster. While a match is live its /24 is left out, so changing a setting
+mid-game does not cut the match.
 
-Only outbound packets are held for a decision. Inbound copies are read in sniff
-mode, which the driver delivers without removing them, so the game's receive
-path never waits for the app. The sniffer closes while a match is live and
-resumes when it ends, which keeps the packet path light.
+Because this is a blocklist, a range that is not in the catalog can still
+receive the first packets. Once it is located and the rules sync, later traffic
+is dropped and the game sees a timeout. Unclassified ranges pass by default;
+that is the price of not intercepting.
 
-Safe scope is the default because lobby and party traffic often uses cloud
-addresses that no server list contains, and because the game pings every
-candidate before choosing. A located server your rules reject is dropped on its
-first packet, so it never answers. An unlocated endpoint is dropped only once a
-flow looks like a real session. A range that hosts a match is remembered as a
-server, and the search guard timer restarts after a minute of quiet.
+The search guard clears the block rules while it is relaxed, so the game can
+find someone to play when nothing nearby is available. The rules return once a
+match starts. Game service endpoints are excluded from every block list, because
+Windows Firewall checks block rules before allow rules and an allow rule cannot
+override a block. The app leaves those ranges out instead.
 
-Traffic on port 3074, Steam networking and relay ports (27000-27199) and STUN
-ports (3478, 4379-4380) is control traffic and is not dropped automatically.
-Provider blocks do not override that, but explicit denies do, including the
-block button on a match. Strict is the older behaviour: drop everything the
-rules reject, at the cost of occasional matchmaking failures.
+Rules are named `COD Ping King Block ...`, visible in Windows Firewall, and
+removed when filtering stops or the app exits. If it crashes, the next launch
+clears stale rules before applying new ones.
 
-Auth, lobby, ownership and CDN addresses are resolved at launch and refreshed
-every ten minutes. If one is ever blocked, Diagnostics shows the endpoint and
-reason, and the log keeps a rate-limited line per address.
-
-If the app exits or crashes, the driver closes and Windows routes normally again.
-There are no firewall rules left behind.
+Without packet interception there are no driver counters. Packet counts and the
+ping estimate come from ETW events, and a verdict only decides whether a range
+goes into a firewall rule. There is no packet to hold.
 
 ## Server data
 
 The bundled catalog comes from two community lists,
 [Geomate](https://github.com/hudra0/geomate) and
 [cod-server-list](https://github.com/zFF2/cod-server-list) (September 2026),
-geolocated with [ip-api](https://ip-api.com), plus whatever the app observes on
+geolocated with [ipwho.is](https://ipwho.is), plus whatever the app observes on
 your machine. Nearby addresses are grouped into clusters, and a cluster is what
 you allow or deny.
 
@@ -271,18 +260,16 @@ Servers screen knows who hosts it. There is no telemetry and no account.
 The installer launches it elevated, but a shortcut you made yourself may not.
 
 **Game not detected.** It matches `cod.exe`, `cod_hq.exe`, `modernwarfare.exe`,
-`blackopscoldwar.exe`, `warzone.exe`, and any `<prefix>-cod.exe` build such as
-`cod24-cod.exe` or `cod25-cod.exe`. Campaign executables (`sp24-cod.exe`) are
-ignored on purpose. Start the game first; the process list is checked while
-filtering runs, and **Diagnostics** shows which file was matched.
+`blackopscoldwar.exe`, `vanguard.exe`, `warzone.exe`, and any `<prefix>-cod.exe`
+build such as `cod24-cod.exe` or `cod25-cod.exe`. Campaign executables
+(`sp24-cod.exe`) are ignored on purpose. Start the game first; the process list
+is checked while filtering runs, and **Diagnostics** shows which file was
+matched.
 
-**A game closes or refuses to launch while filtering is on.** Set **Settings ->
-Compatibility -> Attach to the game** to **Immediately** and try again. The
-default waits for the game's UDP ports to settle so the first packets of a launch
-are not intercepted; a few titles open sockets late. If it still closes, turn on
-**Leave port 3074 alone**, which exempts the main socket the game shares with its
-lobby traffic. Quit the app (it unloads the driver) and report which title and
-where it stopped.
+**A game closes while the app is running.** This was the WinDivert driver.
+2.0 does not load one. If an older install left the WinDivert service running,
+run `sc stop WinDivert` and `sc delete WinDivert` in an elevated terminal, or
+reboot. The app also removes the stale service at startup when it runs elevated.
 
 **The wizard recommends nothing.** It needs a home location and at least one
 located cluster. Run **Settings -> Update from public lists**, then try again. A
@@ -295,33 +282,32 @@ every catalogued server near you is denied. Widen the radius or add a region.
 
 **Stuck on "Waiting for relay".** Relay and lobby hosts run on the same hosting
 providers as match servers, so a provider block can cut the relay and leave the
-loading screen waiting. Set that provider back to **No rule**. Steam relay traffic
-on ports 27000-27199 is exempt by default; an explicit deny on one of those
-addresses still applies.
+loading screen waiting. Set that provider back to **No rule**. Firewall blocks
+cover every UDP packet to a blocked range, so a relay on the same address is
+affected too.
 
 **"Unable to connect to online services."** Something is blocking a service
 endpoint. Game services are pinned at startup; if the host list could not be
 resolved (offline DNS, VPN), restart the app with the network connected. Do not
 add Demonware or CDN addresses to a deny list.
 
-**The installer cannot replace files.** Setup now stops the WinDivert driver
-service before copying and asks you to close a running window. If it still
-reports access denied on `WinDivert64.sys`, reboot and run it again; the driver
-stays loaded until the service is gone.
+**The installer cannot replace files.** Setup stops any old WinDivert driver
+service before copying, so an upgrade from 1.3.x does not leave one behind. If
+Setup reports access denied on `WinDivert64.sys`, reboot and run it again; the
+old driver stays loaded until the service is gone.
 
-**"Packet driver unavailable" banner.** Click **Retry driver** first. If that
-fails, the error text under **Diagnostics** names the reason; copy it when
-asking for help. Reinstalling fixes a missing driver file. Antivirus software
-that quarantines `WinDivert64.sys` also produces this.
+**"Traffic capture unavailable" banner.** Click **Retry capture** first. If that
+fails, the error under **Diagnostics** names the reason; copy it when asking for
+help. Reinstalling fixes a missing capture library.
 
 ## Limitations
 
-- **Coverage varies by title.** The newest release will have endpoints the
-  catalog has not located yet. Safe scope waits for a session before dropping
-  those; strict mode blocks them from the first packet.
-- **Safe scope is a trade.** A range absent from every list, and never used for a
-  match, can carry the first second of traffic before it is dropped and
-  remembered. Strict refuses it immediately but can break matchmaking.
+- **Coverage varies by title.** A range the catalog has not located cannot be
+  blocked, so unknown endpoints pass. Update the public lists or play a few
+  matches to fill the gaps.
+- **First contact can slip.** A server outside your regions can answer the first
+  packets before its range is known, so a join may start and then fail.
+  Matchmaking is slower than it was with packet interception.
 - **Provider rules need a provider.** Ranges with no ASN or organisation in the
   bundled lists pass provider rules because there is nothing to compare. Provider
   names are only as accurate as the list snapshot.
@@ -335,17 +321,24 @@ that quarantines `WinDivert64.sys` also produces this.
 - **Public lists go stale.** They are community snapshots, not an official server
   directory.
 - **Anti-cheat and terms of service.** The app does not read game memory, inject
-  code or change game files. It filters packets, the same way a firewall does.
-  Activision's terms still leave them free to restrict access, so keep that in
-  mind.
-- **Windows only.** The driver and tray integration are Windows-specific.
+  code, load a driver or change game files. It observes network events and writes
+  firewall rules. Activision's terms still leave them free to restrict access, so
+  keep that in mind.
+- **Windows only.** ETW, Windows Firewall and the tray integration are
+  Windows-specific.
 
-## Why not Windows Firewall
+## Why not a packet driver
 
-Windows Firewall checks explicit block rules before allow rules, so it cannot say
-"allow these regions and drop the rest" without listing every address to block.
-Cloud ranges rotate, which makes a static blocklist unreliable. WinDivert can do
-a real allowlist and releases cleanly when the app exits.
+Earlier versions used WinDivert to hold every packet and enforce an exact
+allowlist. The November 2026 Call of Duty patch makes Ricochet close the game as
+soon as that driver is loaded, even when the app is idle, so a driver-based
+filter no longer works with current titles.
+
+Windows Firewall cannot express a true allowlist either, because block rules win
+over allow rules. What it can do is block the catalogued ranges outside your
+policy and let everything unknown through. That is the trade this version makes:
+no kernel driver, no interception, and a blocklist that improves as the catalog
+grows.
 
 ## Build from source
 
@@ -367,7 +360,7 @@ python main.py
 as administrator if you want filtering; without elevation it only catalogs.
 
 The first launch writes a policy and seeds the catalog from the bundled lists. To
-look at the interface without the game or driver:
+look at the interface without the game running:
 
 ```bat
 python main.py --preview
@@ -394,7 +387,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-1.3.4.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-2.0.3.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 
@@ -429,13 +422,15 @@ later install.
 cod_region_filter/
   app.py       entry point, window and tray wiring
   api.py       JS-to-Python bridge
-  capture.py   WinDivert capture and verdict enforcement
+  capture.py   legacy WinDivert service cleanup
   catalog.py   SQLite range catalog and clustering
   catalog_update.py  public list download and parsing
   engine.py    flow tracking, match detection, search guard
+  firewall.py  Windows Firewall block rule management
   games.py     process and UDP port discovery
   geo.py       HTTPS geolocation
   hotkey.py    global pause shortcut
+  netwatch.py  ETW traffic observation
   paths.py     per-user data locations and migration
   policy.py    YAML policy and evaluation
   services.py  service endpoint resolution
@@ -468,6 +463,9 @@ This tool is free and always will be. If it saves you time, you can help cover t
 Not affiliated with or endorsed by Activision Publishing, Inc. Call of Duty is a
 trademark of Activision Publishing, Inc. This project ships no game assets and
 uses no Call of Duty logos.
+
+
+
 
 
 

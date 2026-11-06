@@ -15,10 +15,10 @@ datas = [
     (os.path.join(ROOT, "cod_region_filter", "ui"), "cod_region_filter/ui"),
 ]
 binaries = []
-hiddenimports = ["webview.platforms.edgechromium", "pystray._win32"]
+hiddenimports = ["webview.platforms.edgechromium", "pystray._win32", "etw"]
 
-# pydivert carries the signed WinDivert driver next to its module.
-for package in ("pydivert", "webview", "pystray", "PIL"):
+# pywintrace provides the ETW consumer; it is pure Python and needs no driver.
+for package in ("webview", "pystray", "PIL"):
     pkg_datas, pkg_binaries, pkg_hidden = collect_all(package)
     datas += pkg_datas
     binaries += pkg_binaries
@@ -32,7 +32,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "pytest"],
+    excludes=["tkinter", "pytest", "pydivert"],
     noarchive=False,
 )
 pyz = PYZ(a.pure)

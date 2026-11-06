@@ -306,7 +306,6 @@ const demo = (() => {
     deny: { regions: [], clusters: [], countries: [], providers: [], cidrs: [] },
     max_rtt_ms: 0,
     soft_mode: { enabled: true, relax_after_s: 45 },
-    strict: false,
   };
 
   const config = {
@@ -317,9 +316,6 @@ const demo = (() => {
     wizard_done: !new URLSearchParams(location.search).has("wizard"),
     minimize_to_tray: true,
     streamer_mode: false,
-    attach_mode: "safe",
-    unload_driver_on_exit: true,
-    skip_3074: false,
     theme: DEMO_PARAM
       ? new URLSearchParams(location.search).get("theme") || "midnight"
       : "midnight",
@@ -405,7 +401,6 @@ soft_mode:
       allow: policy.allow,
       deny: policy.deny,
       soft: policy.soft_mode,
-      strict: Boolean(policy.strict),
     };
   }
 
@@ -432,7 +427,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "1.3.4",
+        version: "2.0.3",
         elevated: true,
         driver: true,
         driver_error: "",
@@ -449,7 +444,8 @@ soft_mode:
         policy_home: config.streamer_mode
           ? { lat: null, lon: null, label: "Hidden by streamer mode", hidden: true }
           : { ...demoLocation },
-        capture: { available: false, running: false, status: "preview", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], attach_mode: "safe", packets: 0, packets_per_second: 0, reopens: 1, sniffed: 0, sniff_sampled: 0 },
+        capture: { available: false, running: false, status: "preview", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], packets: 0, packets_per_second: 0, reopens: 1, sniffed: 0, sniff_sampled: 0 },
+        firewall: { available: true, rules: 24, applying: false, error: "", last_ms: 640 },
         summary: summary(),
         catalog_update: { running: false, message: "", report: [], finished_at: 0 },
         state: statePayload(),
@@ -490,7 +486,7 @@ soft_mode:
       return {
         state: statePayload(),
         game: { pid: 12844, name: "cod.exe", exe: "", match: "exact name" },
-        capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], attach_mode: "safe", packets: 184320, packets_per_second: 62.4, reopens: 1, sniffed: 512640, sniff_sampled: 128160 },
+        capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], packets: 184320, packets_per_second: 62.4, reopens: 1, sniffed: 512640, sniff_sampled: 128160 },
         elevated: true,
         driver: true,
         driver_error: "",
@@ -552,7 +548,6 @@ soft_mode:
     export_discovered: () => ({ ok: true, path: "%USERPROFILE%\\Documents\\cod-ping-king-discovered.json", count: 0 }),
     set_soft_mode(enabled, seconds) { policy.soft_mode.enabled = enabled; policy.soft_mode.relax_after_s = seconds; return { ok: true }; },
     set_unknown(mode) { policy.unknown = mode; return { ok: true }; },
-    set_strict(on) { policy.strict = Boolean(on); return { ok: true }; },
     set_provider_rule(provider, rule) {
       policy.allow.providers = policy.allow.providers.filter((p) => p !== provider);
       policy.deny.providers = policy.deny.providers.filter((p) => p !== provider);
@@ -642,12 +637,12 @@ function renderChrome(boot) {
   pill.classList.toggle("ok", Boolean(game));
   $("#game-pill-text").textContent = game ? `${game.name} running` : "Game not detected";
 
-  const driverError = boot.driver_error || (!boot.driver ? "The packet driver library is missing from this install." : "");
+  const driverError = boot.driver_error || (!boot.driver ? "Traffic capture is unavailable. Reinstall the app." : "");
 
   if (!boot.elevated) {
     setStatus("warn", "Administrator required", "Catalog only, no blocking");
   } else if (driverError) {
-    setStatus("warn", "Driver error", "Filtering unavailable");
+    setStatus("warn", "Capture error", "Filtering unavailable");
   } else if (!s.filtering) {
     setStatus("warn", "Filtering paused", "All servers reachable");
   } else if (game) {
@@ -691,16 +686,16 @@ function renderDashboard(boot) {
 
   $("#stat-server").textContent = current ? (current.city || "Unclassified") : "Searching";
   $("#stat-server-sub").textContent = current
-    ? `${current.region || current.country || "Unknown location"}${current.provider ? ` - ${current.provider}` : ""}${current.allowed ? "" : " (blocked)"}`
+    ? `${current.region || current.country || "Unknown location"}${current.provider ? ` - ${current.provider}` : ""}${current.allowed ? "" : " (outside policy)"}`
     : (s.searching_s ? `Searching for ${fmtDuration(s.searching_s)}` : "No match in progress");
 
   const shownRtt = current ? current.rtt_ms : null;
   $("#stat-rtt").textContent = fmtPing(shownRtt);
   $("#stat-rtt-sub").textContent = "Approximate, from reply timing";
   $("#stat-denied").textContent = s.allowed_packets.toLocaleString();
-  $("#stat-denied-sub").textContent = `${s.denied_packets.toLocaleString()} dropped${s.soft_active ? ", guard active" : ""}`;
+  $("#stat-denied-sub").textContent = `${s.denied_packets.toLocaleString()} outside policy${s.soft_active ? ", guard active" : ""}`;
 
-  $("#session-tag").textContent = current ? (current.allowed ? "Connected" : "Blocked") : "Idle";
+  $("#session-tag").textContent = current ? (current.allowed ? "Connected" : "Outside policy") : "Idle";
   $("#session-tag").className = `tag ${current ? (current.allowed ? "ok" : "bad") : ""}`;
   $("#session-city").textContent = current ? (current.city || "Unclassified server") : "No active match";
   $("#session-region").textContent = current
@@ -714,7 +709,7 @@ function renderDashboard(boot) {
     pin: "Allowed by pin",
     provider: current && /not allowed/i.test(current.reason) ? "Provider not allowed" : "Provider blocked",
     allowlist: "Not in allowlist",
-    deny: "Blocked by rule",
+    deny: "Denied by rule",
     unknown: "Unclassified",
     grace: "Settling in",
     platform: "Platform traffic",
@@ -774,7 +769,7 @@ function renderDashboard(boot) {
       <td class="num">${fmtPing(m.rtt_ms)}</td>
       <td class="num">${fmtDuration(m.duration_s)}</td>
       <td class="num">${fmtBytes(m.bytes)}</td>
-      <td><span class="verdict ${m.allowed ? "" : "blocked"}"><i></i>${m.allowed ? "Allowed" : "Blocked"}</span><div class="hint">${esc(m.reason || "")}</div></td>
+      <td><span class="verdict ${m.allowed ? "" : "blocked"}"><i></i>${m.allowed ? "Allowed" : "Not allowed"}</span><div class="hint">${esc(m.reason || "")}</div></td>
       <td class="num">${canBlock ? `<button class="btn btn-small match-block" data-ip="${esc(m.remote_ip)}" data-blocked="${m.blocked ? "1" : "0"}">${m.blocked ? "Unblock" : "Block"}</button>` : ""}</td>
     </tr>`).join("");
   $("#matches-empty").hidden = matches.length > 0;
@@ -1117,7 +1112,7 @@ function renderServers() {
       <td class="num">${fmtPing(s.rtt_ms)}</td>
       <td class="num">${s.packets ? s.packets.toLocaleString() : "--"}</td>
       <td class="num">${fmtBytes(s.bytes)}</td>
-      <td><span class="verdict ${s.allowed ? "" : "blocked"}"><i></i>${s.allowed ? "Allowed" : "Blocked"}</span><div class="hint">${esc(s.verdict)}</div></td>
+      <td><span class="verdict ${s.allowed ? "" : "blocked"}"><i></i>${s.allowed ? "Allowed" : "Not allowed"}</span><div class="hint">${esc(s.verdict)}</div></td>
     </tr>`).join("");
   $("#servers-empty").hidden = rows.length > 0;
   $("#servers-table").hidden = rows.length === 0;
@@ -1168,10 +1163,6 @@ function renderSettings() {
   $("#set-soft-seconds").value = (summary.soft && summary.soft.relax_after_s) || 45;
   $("#set-soft-seconds").disabled = !(summary.soft && summary.soft.enabled);
   $("#set-unknown").value = summary.unknown || "allow";
-  $("#set-strict").value = summary.strict ? "strict" : "safe";
-  $("#set-attach").value = cfg.attach_mode === "immediate" ? "immediate" : "safe";
-  $("#set-unload").checked = cfg.unload_driver_on_exit !== false;
-  $("#set-skip3074").checked = Boolean(cfg.skip_3074);
   $("#set-geo").checked = Boolean(cfg.auto_geolocate);
   $("#show-seed").checked = Boolean(state.showSeed);
 
@@ -1192,7 +1183,7 @@ function renderSettings() {
   $("#app-facts").innerHTML = [
     ["Version", boot.version],
     ["Administrator", boot.elevated ? "Yes" : "No"],
-    ["Packet driver", boot.driver ? (capture.running ? "Running" : "Ready") : "Unavailable"],
+    ["Traffic capture", boot.driver ? (capture.running ? "Watching" : "Ready") : "Unavailable"],
     [
       "Game",
       boot.game
@@ -1207,17 +1198,19 @@ function renderSettings() {
     ["Service endpoints pinned", summary.service_pins || 0],
     ["Policy", `${summary.mode || "?"}, unknown ${summary.unknown || "?"}`],
     ["Allowed regions", (summary.allow && summary.allow.regions ? summary.allow.regions.length : 0)],
-    ["Provider rules", `${(summary.allow && summary.allow.providers ? summary.allow.providers.length : 0)} allow, ${(summary.deny && summary.deny.providers ? summary.deny.providers.length : 0)} block`],
+    ["Provider rules", `${(summary.allow && summary.allow.providers ? summary.allow.providers.length : 0)} allow, ${(summary.deny && summary.deny.providers ? summary.deny.providers.length : 0)} deny`],
     ["Search guard", summary.soft && summary.soft.enabled ? `${summary.soft.relax_after_s}s` : "Off"],
-    ["Blocking scope", summary.strict ? "Strict" : "Safe"],
-    ["Allowed / denied packets", `${st.allowed_packets || 0} / ${st.denied_packets || 0}`],
+    ["In policy / outside policy", `${st.allowed_packets || 0} / ${st.denied_packets || 0}`],
     ["Matches recorded", st.match_count || 0],
     ["Matches cancelled", st.cancelled_total || 0],
-    ["Attach mode", capture.attach_mode === "immediate" ? "Immediately" : "After launch"],
-    ["Intercepted packets", `${(capture.packets || 0).toLocaleString()} (${capture.packets_per_second || 0}/s)`],
-    ["Inbound sniffed", `${(capture.sniffed || 0).toLocaleString()} (${(capture.sniff_sampled || 0).toLocaleString()} sampled)`],
-    ["Handle reopens", capture.reopens || 0],
-    ["Driver status", capture.status || "unknown"],
+    ["Observed packets", `${(capture.packets || 0).toLocaleString()} (${capture.packets_per_second || 0}/s)`],
+    ["Capture status", capture.status || "unknown"],
+    [
+      "Firewall rules",
+      boot.firewall
+        ? `${boot.firewall.rules || 0}${boot.firewall.applying ? " (applying)" : ""}`
+        : "unknown",
+    ],
   ].map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(String(v))}</dd>`).join("");
 
   $("#driver-error-wrap").hidden = !driverError;
@@ -1762,7 +1755,6 @@ function bindEvents() {
   });
   $("#set-soft-seconds").addEventListener("change", (e) => mutate(call("set_soft_mode", $("#set-soft").value !== "off", Number(e.target.value) || 45), "Search guard delay saved"));
   $("#set-unknown").addEventListener("change", (e) => mutate(call("set_unknown", e.target.value), "Unknown endpoint rule saved"));
-  $("#set-strict").addEventListener("change", (e) => mutate(call("set_strict", e.target.value === "strict"), e.target.value === "strict" ? "Strict scope saved" : "Safe scope saved"));
   $("#providers-table").addEventListener("change", (e) => {
     const select = e.target.closest(".provider-rule");
     if (!select) return;
@@ -1772,20 +1764,16 @@ function bindEvents() {
       : rule === "allow" ? `${provider} allowed only` : `No provider rule for ${provider}`;
     mutate(call("set_provider_rule", provider, rule), message);
   });
-  $("#set-attach").addEventListener("change", (e) => mutate(call("set_setting", "attach_mode", e.target.value), e.target.value === "immediate" ? "Attaching immediately" : "Attaching after launch"));
-  $("#set-unload").addEventListener("change", (e) => mutate(call("set_setting", "unload_driver_on_exit", e.target.checked), e.target.checked ? "Driver unloads on exit" : "Driver stays loaded after exit"));
-  $("#set-skip3074").addEventListener("change", (e) => mutate(call("set_setting", "skip_3074", e.target.checked), e.target.checked ? "Port 3074 left alone" : "Port 3074 watched"));
   $("#reset-filtering").addEventListener("click", async () => {
     const ok = await confirmDialog(
       "Reset filtering options?",
-      "Search guard returns to 45 seconds, blocking scope to safe, and unclassified endpoints to the default for your mode. Regions and provider rules are not touched.",
+      "Search guard returns to 45 seconds and unclassified endpoints to the default for your mode. Regions and provider rules are not touched.",
       "Reset"
     );
     if (!ok) return;
     const unknown = boot.summary && boot.summary.mode === "allowlist" ? "deny" : "allow";
     await call("set_soft_mode", true, 45);
     await call("set_unknown", unknown);
-    await call("set_strict", false);
     await refresh();
     toast("Filtering options reset", "ok");
   });
@@ -1854,10 +1842,10 @@ function bindEvents() {
   $("#driver-retry").addEventListener("click", async () => {
     const result = await call("restart_capture");
     if (result && result.ok === false) {
-      toast(result.error || "Could not start the driver", "bad");
+      toast(result.error || "Could not start traffic capture", "bad");
       return;
     }
-    toast("Driver restarted", "ok");
+    toast("Traffic capture restarted", "ok");
     refresh();
   });
 
@@ -1922,6 +1910,10 @@ function bindEvents() {
   await refresh();
   setInterval(poll, 2000);
 })();
+
+
+
+
 
 
 

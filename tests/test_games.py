@@ -10,10 +10,14 @@ from cod_region_filter import games
 
 def test_matches_current_titles():
     for name in (
-        "cod.exe",
         "ModernWarfare.exe",
         "BlackOpsColdWar.exe",
+        "Vanguard.exe",
+        "cod.exe",
         "cod_hq.exe",
+        "warzone.exe",
+        "cod22-cod.exe",
+        "cod23-cod.exe",
         "cod24-cod.exe",
         "cod25-cod.exe",
         "cod26-cod.exe",

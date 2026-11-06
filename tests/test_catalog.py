@@ -7,6 +7,8 @@ from cod_region_filter.catalog import (
     region_key,
 )
 
+import threading
+
 
 def record(cidr, city="Columbus", region_code="OH"):
     return RangeRecord(
@@ -319,3 +321,23 @@ def test_resolve_location_touches_only_its_own_range(tmp_path):
     assert index.find("45.63.9.9").city == "Atlanta"
     assert index.find("66.42.94.9").city == ""
     cat.close()
+
+
+def test_observe_does_not_wait_for_a_catalog_write(tmp_path):
+    cat = Catalog(tmp_path / "catalog.db")
+    done = threading.Event()
+
+    def observe():
+        cat.observe("45.63.9.9", 500)
+        done.set()
+
+    cat._lock.acquire()
+    try:
+        thread = threading.Thread(target=observe)
+        thread.start()
+        assert done.wait(1.0), "observe blocked behind the catalog lock"
+        thread.join(1.0)
+    finally:
+        cat._lock.release()
+    cat.close()
+

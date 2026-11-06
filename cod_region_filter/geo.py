@@ -99,7 +99,7 @@ class GeoWorker(threading.Thread):
         self._seen: set[str] = set()
         self._on_result = on_result
         self._log = log or (lambda *_: None)
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
         self._last_call = 0.0
         self._lock = threading.Lock()
 
@@ -111,10 +111,10 @@ class GeoWorker(threading.Thread):
                     self._queue.put(cidr)
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_event.set()
 
     def run(self) -> None:
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             batch: list[str] = []
             try:
                 batch.append(self._queue.get(timeout=1.0))
@@ -128,8 +128,8 @@ class GeoWorker(threading.Thread):
 
             wait = MIN_INTERVAL_S - (time.monotonic() - self._last_call)
             if wait > 0:
-                self._stop.wait(wait)
-            if self._stop.is_set():
+                self._stop_event.wait(wait)
+            if self._stop_event.is_set():
                 return
 
             try:
@@ -140,7 +140,7 @@ class GeoWorker(threading.Thread):
                     # Free tier resets daily. Retrying immediately only deepens
                     # the limit, so park the queue until the next window.
                     self._log("geolocation rate limit reached; pausing lookups")
-                    self._stop.wait(RATE_LIMIT_S)
+                    self._stop_event.wait(RATE_LIMIT_S)
                 else:
                     self._log(f"geolocation failed: {exc}")
                 with self._lock:

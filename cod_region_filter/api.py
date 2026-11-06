@@ -127,9 +127,6 @@ class Api:
     def set_unknown(self, mode: str) -> dict:
         return self.state.set_unknown(mode)
 
-    def set_strict(self, enabled: bool) -> dict:
-        return self.state.set_strict(enabled)
-
     def set_provider_rule(self, provider: str, rule: str) -> dict:
         return self.state.set_provider_rule(provider, rule)
 

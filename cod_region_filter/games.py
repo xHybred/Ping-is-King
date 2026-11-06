@@ -20,7 +20,8 @@ import psutil
 GAME_PROCESSES = (
     "modernwarfare.exe",  # Modern Warfare (2019), Warzone 1
     "blackopscoldwar.exe",  # Black Ops Cold War
-    "cod.exe",  # Vanguard, MWII, MWIII, BO6 through CoD HQ
+    "vanguard.exe",  # Vanguard, the last title with its own executable name
+    "cod.exe",  # Vanguard through CoD HQ, latest release
     "cod_hq.exe",  # CoD HQ launcher
     "warzone.exe",  # standalone Warzone builds
 )

@@ -189,8 +189,14 @@ class Catalog:
         self.path = path or paths.db_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = threading.RLock()
+        self._pending_lock = threading.Lock()
         self._conn = sqlite3.connect(self.path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # WAL keeps readers off the writer's back and NORMAL avoids an fsync per
+        # commit. The packet thread should never wait on a disk flush.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=2000")
         self._conn.executescript(SCHEMA)
         self._migrate()
         self._conn.commit()
@@ -319,7 +325,7 @@ class Catalog:
     def observe(self, ip: str, size: int, rtt_ms: float | None = None, cidr: str | None = None) -> str:
         """Buffer traffic for a remote IP and return its /24 cidr."""
         cidr = cidr or cidr_for(ip)
-        with self._lock:
+        with self._pending_lock:
             slot = self._pending.get(cidr)
             if slot is None:
                 slot = self._pending[cidr] = {"packets": 0, "bytes": 0, "rtt": []}
@@ -332,10 +338,13 @@ class Catalog:
         return cidr
 
     def flush(self) -> None:
-        with self._lock:
+        # Swap first, then write. observe() can keep counting into the fresh
+        # buffer while SQLite commits; it never waits for the disk.
+        with self._pending_lock:
             if not self._pending:
                 return
             pending, self._pending = self._pending, {}
+        with self._lock:
             now = utcnow()
             inserted: list[str] = []
             for cidr, slot in pending.items():
@@ -742,8 +751,9 @@ class Catalog:
         return target
 
     def reset(self) -> None:
+        with self._pending_lock:
+            self._pending.clear()
         with self._lock:
             self._conn.executescript("DELETE FROM ranges; DELETE FROM matches;")
             self._conn.commit()
-            self._pending.clear()
             self._touch()

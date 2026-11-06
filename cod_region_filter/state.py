@@ -10,15 +10,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import catalog_update, games, geo, paths, policy as policy_mod, services, startup, titlebar
+from . import catalog_update, firewall as firewall_mod, games, geo, netwatch, paths, policy as policy_mod, services, startup, titlebar
 from . import __version__
 from .catalog import Catalog, cidr_for, provider_label
-from .capture import (
-    CaptureWorker,
-    available as driver_available,
-    driver_problem,
-    unload_driver,
-)
+from .legacy import unload_driver
 from .engine import Engine
 from .policy import PolicyEngine, parse as parse_policy, dump as dump_policy
 
@@ -33,9 +28,6 @@ DEFAULT_CONFIG = {
     "minimize_to_tray": True,
     "streamer_mode": False,
     "theme": "midnight",
-    "attach_mode": "safe",
-    "unload_driver_on_exit": True,
-    "skip_3074": False,
 }
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -106,15 +98,10 @@ class AppState:
         self.engine = Engine(self.catalog, self.policy_engine, self.log)
         self.engine.set_filtering(bool(self.config["filtering"]))
         self.geo = geo.GeoWorker(self._on_geo, self.log)
-        self.capture = CaptureWorker(
-            self.engine,
-            self.log,
-            attach_mode=self.config.get("attach_mode", "safe"),
-            active=bool(self.config["filtering"]),
-            skip_3074=bool(self.config.get("skip_3074", False)),
-        )
+        self.capture = netwatch.NetWatch(self.engine, self.log)
+        self.firewall = firewall_mod.Firewall(self.log)
         self.elevated = games.uac_enabled()
-        self.driver = driver_available()
+        self.driver = netwatch.available()
         self.game = games.find_game()
         self._game_cache = self.game
         self._game_checked_at = 0.0
@@ -172,46 +159,43 @@ class AppState:
         home = "set" if p.home_lat is not None else "unset"
         soft = f"on/{p.soft_mode.relax_after_s}s" if p.soft_mode.enabled else "off"
         self.log(
-            f"policy {event}: mode={p.mode} unknown={p.unknown} strict={str(p.strict).lower()} "
+            f"policy {event}: mode={p.mode} unknown={p.unknown} "
             f"soft={soft} allow={len(p.allow.regions)} regions deny={len(p.deny.cidrs)} ranges "
             f"radius={p.allow.radius_km:g}km home={home}"
         )
 
     def start(self) -> None:
         self.log(
-            f"starting {APP_VERSION}: elevated={self.elevated} driver={self.driver} "
-            f"attach={self.config.get('attach_mode', 'safe')} "
-            f"skip3074={bool(self.config.get('skip_3074'))} "
-            f"filtering={bool(self.config.get('filtering'))}"
+            f"starting {APP_VERSION}: elevated={self.elevated} capture={self.driver} "
+            f"mode=firewall filtering={bool(self.config.get('filtering'))}"
         )
         self.log(f"catalog: {len(self._clusters)} clusters in {len(self._regions)} regions")
         self.geo.start()
         self._tick_thread = threading.Thread(target=self._tick_loop, name="tick", daemon=True)
         self._tick_thread.start()
+        self.firewall.start()
         if self.driver and self.elevated:
+            # A driver left by an older version keeps Ricochet unhappy even
+            # though this build never opens a handle. Remove it once at launch.
+            unload_driver(self.log)
             self.capture.start()
             self._capture_started = True
 
     def restart_capture(self) -> dict:
-        """Recreate the capture worker, e.g. after WinDivert was reinstalled."""
-        self.driver = driver_available()
+        """Restart observation, e.g. after ETW was stopped by another tool."""
+        self.driver = netwatch.available()
         if not self.driver:
             return {
                 "ok": False,
-                "error": "The packet driver library is missing from this install. Reinstall the app.",
+                "error": "Traffic capture is unavailable. Reinstall the app.",
             }
         if not self.elevated:
-            return {"ok": False, "error": "Restart as administrator to use the packet driver."}
+            return {"ok": False, "error": "Restart as administrator to observe traffic."}
         old = self.capture
         old.stop()
-        old.join(timeout=2)
-        self.capture = CaptureWorker(
-            self.engine,
-            self.log,
-            attach_mode=self.config.get("attach_mode", "safe"),
-            active=bool(self.config.get("filtering", True)),
-            skip_3074=bool(self.config.get("skip_3074", False)),
-        )
+        if old.is_alive():
+            old.join(timeout=2)
+        self.capture = netwatch.NetWatch(self.engine, self.log)
         self.capture.start()
         return {"ok": True}
 
@@ -224,9 +208,14 @@ class AppState:
         self.capture.stop()
         if self.capture.is_alive():
             self.capture.join(timeout=2)
-        if self._capture_started and self.config.get("unload_driver_on_exit", True) and self.elevated:
-            # Leaving the service loaded is what made upgrades fail with
-            # "DeleteFile failed; code 5" on WinDivert64.sys.
+        # Firewall rules outlive the process, so they must be removed here.
+        try:
+            self.firewall.close()
+        except Exception as exc:
+            self.log(f"firewall cleanup failed: {exc}")
+        if self._capture_started and self.elevated:
+            # WinDivert is no longer used, but an upgrade may still have left
+            # the service behind.
             unload_driver(self.log)
         thread = self._tick_thread
         if thread is not None and thread is not threading.current_thread():
@@ -249,6 +238,7 @@ class AppState:
         last_refresh = 0.0
         last_geo = 0.0
         last_services = 0.0
+        last_firewall = 0.0
         while not self._stop.is_set():
             now = time.monotonic()
             self.engine.tick()
@@ -278,7 +268,44 @@ class AppState:
                 threading.Thread(
                     target=self._refresh_services, name="services", daemon=True
                 ).start()
+            if now - last_firewall > 2.0:
+                last_firewall = now
+                self._sync_firewall()
             self._stop.wait(1.0)
+
+    def _sync_firewall(self) -> None:
+        """Hand the firewall worker the set of ranges that should be blocked.
+
+        Firewall rules apply at connection time, so the search guard works by
+        removing every rule while it is relaxed. A live match keeps its own
+        /24 out of the block list, otherwise the next packet would be dropped
+        mid-game.
+        """
+        if not (self.elevated and firewall_mod.available()):
+            return
+        if not self.engine.filtering:
+            self.firewall.sync((), ())
+            return
+        exes = self.capture.exe_paths()
+        current = self.engine.current_match()
+        if not exes:
+            self.firewall.sync((), ())
+            return
+        if current is None and self.engine.soft_active:
+            self.firewall.sync(exes, ())
+            return
+        keep = current["cidr"] if current else ""
+        cidrs: list[str] = []
+        for cluster in self._clusters:
+            if self.policy_engine.decide("0.0.0.0", None, cluster)["allow"]:
+                continue
+            for cidr in cluster["cidrs"]:
+                cidrs.append(cidr)
+        if keep in cidrs:
+            # Only a disallowed server needs the exception. Removing it from an
+            # allowed match changed nothing but rewrote every rule.
+            cidrs.remove(keep)
+        self.firewall.sync(exes, cidrs)
 
     def _queue_geo(self) -> None:
         rows = self.catalog.unlocated_observed(120)
@@ -594,17 +621,9 @@ class AppState:
 
         if key == "filtering":
             self.engine.set_filtering(bool(value))
-            if self.capture.is_alive():
-                # Pausing now detaches from the game instead of only changing
-                # verdicts, so a paused app touches no packets at all.
-                if value:
-                    self.capture.resume()
-                else:
-                    self.capture.pause()
-        elif key == "attach_mode":
-            self.capture.set_attach_mode(str(value))
-        elif key == "skip_3074":
-            self.capture.set_skip_3074(bool(value))
+            if not value:
+                # Rules are the whole enforcement now; clear them on pause.
+                self.firewall.sync((), ())
         elif key == "auto_geolocate" and value:
             self._queue_geo()
         return {"ok": True, "config": self.config}
@@ -630,12 +649,6 @@ class AppState:
 
         def mutate(p: policy_mod.Policy) -> None:
             p.unknown = mode
-
-        return self.update_policy(mutate)
-
-    def set_strict(self, enabled: bool) -> dict:
-        def mutate(p: policy_mod.Policy) -> None:
-            p.strict = bool(enabled)
 
         return self.update_policy(mutate)
 
@@ -757,11 +770,13 @@ class AppState:
                 self._game_checked_at = now
             game = self._game_cache
         self.game = game
-        driver_error = driver_problem(capture)
+        driver_error = ""
         if not self.elevated:
             capture["status"] = "administrator required"
         elif not self.driver:
-            capture["status"] = "driver package missing"
+            capture["status"] = "capture unavailable"
+        elif capture.get("status") == "capture error":
+            driver_error = capture.get("error") or "Traffic capture could not start."
         engine_state = self.engine.state()
         streamer = self.streamer_mode()
         if streamer:
@@ -778,6 +793,7 @@ class AppState:
             "state": engine_state,
             "game": game,
             "capture": capture,
+            "firewall": self.firewall.status,
             "elevated": self.elevated,
             "driver": self.driver,
             "driver_error": driver_error,

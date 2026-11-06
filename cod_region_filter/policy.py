@@ -166,7 +166,6 @@ def dump(policy: Policy) -> str:
     data = {
         "mode": policy.mode,
         "unknown": policy.unknown,
-        "strict": policy.strict,
         "home": {"lat": policy.home_lat, "lon": policy.home_lon},
         "allow": {
             "regions": sorted(policy.allow.regions),
@@ -193,7 +192,6 @@ def dump(policy: Policy) -> str:
         "# COD Ping King policy\n"
         "# mode: allowlist blocks every located server that is not allowed below.\n"
         "# unknown: what to do with endpoints the catalog has not located yet.\n"
-        "# strict: true drops every located endpoint; false drops listed servers and busy sessions only.\n"
         "# providers: names from the Providers card. A deny wins over an allow.\n"
         "# Edits apply immediately; the app validates and rejects broken files.\n"
     )
@@ -369,7 +367,6 @@ class PolicyEngine:
         return {
             "mode": p.mode,
             "unknown": p.unknown,
-            "strict": p.strict,
             "clusters": len(located),
             "allowed_clusters": allowed,
             "radius_keys": len(self._radius_keys),
