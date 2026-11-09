@@ -2,7 +2,7 @@
 ;   iscc packaging\installer.iss
 
 #define AppName "COD Ping King"
-#define AppVersion "2.1.0"
+#define AppVersion "2.1.1"
 #define AppExe "CODPingKing.exe"
 
 ; Override with iscc /DDistDir=..\dist-next when the default build is locked by a running copy.
@@ -33,7 +33,7 @@ UninstallDisplayIcon={app}\{#AppExe}
 ; Keep the directory a previous install used, so updates land in place even
 ; when the user chose a custom folder. New installs get the path above.
 UsePreviousAppDir=yes
-VersionInfoVersion=2.1.0.0
+VersionInfoVersion=2.1.1.0
 VersionInfoDescription={#AppName} setup
 
 [InstallDelete]
@@ -43,8 +43,8 @@ Type: files; Name: "{group}\CoD Region Filter.lnk"
 Type: files; Name: "{autodesktop}\CoD Region Filter.lnk"
 
 [Files]
-; restartreplace is the fallback for WinDivert64.sys: if the service could not
-; be stopped, the driver is swapped at reboot instead of failing the install.
+; restartreplace lets Setup swap a bundled file that a running copy still holds
+; open, instead of failing the install.
 Source: "{#DistDir}\{#AppName}\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs ignoreversion restartreplace
 
 [Icons]

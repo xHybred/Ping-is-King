@@ -116,13 +116,6 @@ function fmtPing(ms) {
   return ms === null || ms === undefined ? "--" : `${Math.round(ms)} ms`;
 }
 
-function fmtDate(iso) {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-}
-
 function toast(message, kind = "") {
   const el = document.createElement("div");
   el.className = `toast ${kind}`;
@@ -335,8 +328,7 @@ const demo = (() => {
     manual: false,
     checked: true,
     available: demoUpdateOffer,
-    version: demoUpdateOffer ? "2.1.1" : "2.1.0",
-    notes: "",
+    version: demoUpdateOffer ? "2.1.2" : "2.1.1",
     size: demoUpdateOffer ? 28_400_000 : 0,
     sha256: "",
     url: "",
@@ -454,7 +446,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "2.1.0",
+        version: "2.1.1",
         elevated: true,
         driver: true,
         driver_error: "",
@@ -471,7 +463,7 @@ soft_mode:
         policy_home: config.streamer_mode
           ? { lat: null, lon: null, label: "Hidden by streamer mode", hidden: true }
           : { ...demoLocation },
-        capture: { available: false, running: false, status: "preview", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], packets: 0, packets_per_second: 0, reopens: 1, sniffed: 0, sniff_sampled: 0 },
+        capture: { available: false, running: false, status: "preview", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], packets: 0, packets_per_second: 0 },
         firewall: { available: true, rules: 24, applying: false, error: "", last_ms: 640 },
         summary: summary(),
         catalog_update: { running: false, message: "", report: [], finished_at: 0 },
@@ -514,7 +506,7 @@ soft_mode:
       return {
         state: statePayload(),
         game: { pid: 12844, name: "cod.exe", exe: "", match: "exact name" },
-        capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], packets: 184320, packets_per_second: 62.4, reopens: 1, sniffed: 512640, sniff_sampled: 128160 },
+        capture: { available: true, running: true, status: "capturing", error: "", pid: 12844, ports: [3074, 30012, 44998], watched: [3074, 30012, 44998], packets: 184320, packets_per_second: 62.4 },
         elevated: true,
         driver: true,
         driver_error: "",
@@ -593,7 +585,7 @@ soft_mode:
           checking: false,
           checked: true,
           available: demoUpdateOffer,
-          version: demoUpdateOffer ? "2.1.1" : "2.1.0",
+          version: demoUpdateOffer ? "2.1.2" : "2.1.1",
         };
       }, 700);
       return { ok: true };

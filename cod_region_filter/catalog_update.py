@@ -9,7 +9,7 @@ Two community sources are used:
 
 Neither list is authoritative: game servers move between cloud ranges, and
 both projects say their data can be stale. Records are imported with lower
-confidence than ip-api lookups of addresses this machine has actually seen,
+confidence than live lookups of addresses this machine has actually seen,
 and the catalog merges rather than overwrites.
 """
 
@@ -42,8 +42,8 @@ SOURCES = (
     },
 )
 
-# ip-api returns two-letter codes while the community list returns full state
-# names. Without normalising, "Ohio" and "OH" become separate regions.
+# Live lookups return two-letter codes while the community list returns full
+# state names. Without normalising, "Ohio" and "OH" become separate regions.
 US_STATES = {
     "Alabama": "AL", "Alaska": "AK", "Arizona": "AZ", "Arkansas": "AR",
     "California": "CA", "Colorado": "CO", "Connecticut": "CT", "Delaware": "DE",

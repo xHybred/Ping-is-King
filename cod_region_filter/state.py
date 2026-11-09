@@ -32,11 +32,6 @@ DEFAULT_CONFIG = {
     "check_updates": True,
 }
 
-RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
-RUN_VALUE = "CODPingKing"
-LEGACY_RUN_VALUE = "CodRegionFilter"
-
-
 def clear_legacy_startup() -> None:
     """Drop autostart entries from older builds; they cannot start an elevated exe."""
     startup.clear_run_entries()
@@ -119,14 +114,12 @@ class AppState:
         self._catalog_lock = threading.Lock()
         self._catalog_update = {"running": False, "message": "", "report": [], "finished_at": 0.0}
         self._update_lock = threading.Lock()
-        self._update_thread: threading.Thread | None = None
         self._update = {
             "checking": False,
             "manual": False,
             "checked": False,
             "available": False,
             "version": "",
-            "notes": "",
             "size": 0,
             "sha256": "",
             "url": "",
@@ -297,6 +290,17 @@ class AppState:
                 self._sync_firewall()
             self._stop.wait(1.0)
 
+    def _firewall_groups(self) -> dict[str, list[str]]:
+        groups: dict[str, list[str]] = {}
+        for cluster in self._clusters:
+            if self.policy_engine.decide("0.0.0.0", None, cluster)["allow"]:
+                continue
+            groups.setdefault(cluster["region_key"], []).extend(cluster["cidrs"])
+        manual = list(self.policy_engine.policy.deny.cidrs)
+        if manual:
+            groups["Manual"] = manual
+        return groups
+
     def _sync_firewall(self) -> None:
         """Hand the firewall worker the regions that should be blocked.
 
@@ -316,12 +320,7 @@ class AppState:
         if self.engine.soft_active:
             self.firewall.sync(exes, {})
             return
-        groups: dict[str, list[str]] = {}
-        for cluster in self._clusters:
-            if self.policy_engine.decide("0.0.0.0", None, cluster)["allow"]:
-                continue
-            groups.setdefault(cluster["region_key"], []).extend(cluster["cidrs"])
-        self.firewall.sync(exes, groups)
+        self.firewall.sync(exes, self._firewall_groups())
 
     def remove_firewall_rules(self) -> dict:
         if self.engine.filtering:
@@ -649,7 +648,7 @@ class AppState:
             self.engine.set_filtering(bool(value))
             if not value:
                 # Rules are the whole enforcement now; clear them on pause.
-                self.firewall.sync((), ())
+                self.firewall.sync((), {})
         elif key == "auto_geolocate" and value:
             self._queue_geo()
         return {"ok": True, "config": self.config}
@@ -800,9 +799,7 @@ class AppState:
 
     def _update_payload(self) -> dict:
         with self._update_lock:
-            data = dict(self._update)
-        data.pop("notes", None)
-        return data
+            return dict(self._update)
 
     def _start_launch_check(self) -> None:
         if not self.config.get("check_updates", True):
@@ -825,7 +822,6 @@ class AppState:
                 checked=False,
                 available=False,
                 version="",
-                notes="",
                 size=0,
                 sha256="",
                 url="",
@@ -836,10 +832,9 @@ class AppState:
                 installer="",
                 error="",
             )
-        self._update_thread = threading.Thread(
+        threading.Thread(
             target=self._run_update_check, name="update-check", daemon=True
-        )
-        self._update_thread.start()
+        ).start()
         return {"ok": True}
 
     def _run_update_check(self) -> None:
@@ -860,7 +855,6 @@ class AppState:
                 checked=True,
                 available=newer,
                 version=release.get("version", ""),
-                notes=release.get("notes", ""),
                 size=int(release.get("size") or 0),
                 sha256=release.get("sha256", ""),
                 url=release.get("url", "") if newer else "",
@@ -894,13 +888,12 @@ class AppState:
                 )
                 return {"ok": True}
             self._update.update(downloading=True, progress=0, downloaded=False, error="")
-        self._update_thread = threading.Thread(
+        threading.Thread(
             target=self._run_update_download,
             args=(url, target, sha, size),
             name="update-download",
             daemon=True,
-        )
-        self._update_thread.start()
+        ).start()
         return {"ok": True}
 
     def _run_update_download(self, url: str, target: Path, sha: str, size: int) -> None:

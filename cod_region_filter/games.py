@@ -101,7 +101,7 @@ def udp_ports_map(pids: Iterable[int]) -> dict[int, list[int]]:
 
 
 def uac_enabled() -> bool:
-    """True when this process can load the WinDivert driver."""
+    """True when this process can observe traffic and change firewall rules."""
     try:
         import ctypes
 

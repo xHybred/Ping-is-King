@@ -2,8 +2,8 @@
 
 RegisterHotKey binds to the thread's message queue, so the key has to be
 registered and pumped on one thread that stays alive. The callback runs on that
-thread, which means it must not block; toggling filtering only flips a flag and
-starts or stops the capture handle.
+thread, which means it must not block; toggling filtering only flips a flag,
+and the tick thread syncs the firewall rules.
 """
 
 from __future__ import annotations
@@ -29,7 +29,6 @@ class Hotkey(threading.Thread):
         self.log = log or (lambda *_: None)
         self._stop_event = threading.Event()
         self._thread_id = 0
-        self.registered = False
 
     def run(self) -> None:
         if os.name != "nt":
@@ -60,7 +59,6 @@ class Hotkey(threading.Thread):
         if not user32.RegisterHotKey(None, HOTKEY_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_P):
             self.log("hotkey: Ctrl+Alt+P is already taken")
             return
-        self.registered = True
         self.log("hotkey: Ctrl+Alt+P toggles filtering")
         message = wintypes.MSG()
         try:
@@ -75,7 +73,6 @@ class Hotkey(threading.Thread):
                         self.log(f"hotkey callback failed: {type(exc).__name__}: {exc}")
         finally:
             user32.UnregisterHotKey(None, HOTKEY_ID)
-            self.registered = False
 
     def stop(self) -> None:
         self._stop_event.set()

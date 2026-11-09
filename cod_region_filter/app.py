@@ -37,7 +37,7 @@ def _activate_existing() -> bool:
 
 
 def acquire_single_instance(name: str = MUTEX_NAME) -> bool:
-    """One process only: two copies would fight over the driver and catalog."""
+    """One process only: two copies would fight over the catalog and firewall rules."""
     global _mutex_handle
     # use_last_error and an explicit HANDLE restype matter here: the default
     # int restype truncates the handle and get_last_error is the only reliable
@@ -75,8 +75,8 @@ def setup_logging(verbose: bool) -> logging.Logger:
 def hard_exit(state) -> None:
     """Shut workers down, then leave immediately.
 
-    pywebview teardown from a tray or API thread can hang; process exit releases
-    the WinDivert handle, which flushes queued packets, so this still fails open.
+    pywebview teardown from a tray or API thread can hang; stopping the workers
+    clears the ETW session and firewall rules before the process exits.
     """
     try:
         state.shutdown()

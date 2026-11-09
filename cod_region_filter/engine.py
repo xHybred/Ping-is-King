@@ -87,7 +87,6 @@ class Engine:
         self._current: Flow | None = None
         self._current_started = 0.0
         self._current_rec = None
-        self._last_match_ended = 0.0
         self._searching_since: float | None = None
         self._soft_active = False
         self._soft_pinned_ip: str | None = None
@@ -183,14 +182,8 @@ class Engine:
         direction: str,
         size: int,
         now: float | None = None,
-        count: bool = True,
     ) -> dict:
-        """Decide one packet. Called from the capture thread.
-
-        ``count`` is False for sniffed inbound copies: they feed flow state and
-        RTT but are not enforcement events, so they must not inflate the
-        allowed/denied totals or the denial log.
-        """
+        """Decide one packet. Called from the capture thread."""
         now = now if now is not None else time.monotonic()
         with self._lock:
             self._touch_activity(now)
@@ -240,8 +233,6 @@ class Engine:
             verdict = self._scope(flow, verdict, now, rec)
 
             flow.verdict = verdict
-            if not count:
-                return verdict
             if verdict["allow"]:
                 self._allowed_total += 1
             else:
@@ -256,37 +247,6 @@ class Engine:
                     }
                 )
             return verdict
-
-    def observe_inbound(self, ip: str, port: int, size: int, packets: int = 1, now: float | None = None) -> None:
-        """Record sniffed inbound traffic without deciding anything.
-
-        Called from the sniffer thread for every sampled copy. Running the full
-        verdict path here competes with outbound re-injection for the engine
-        lock and the GIL, which is what made some players rubber-band.
-        """
-        now = now if now is not None else time.monotonic()
-        with self._lock:
-            self._touch_activity(now)
-            key = (ip, port)
-            flow = self._flows.get(key)
-            if flow is None:
-                flow = self._flows[key] = Flow(
-                    ip=ip, port=port, first_seen=now, last_seen=now, cidr=cidr_for(ip)
-                )
-            flow.last_seen = now
-            flow.packets += packets
-            flow.bytes += size
-            flow.inbound += packets
-            flow.last_in = now
-
-            rtt_sample = None
-            if flow.last_out is not None:
-                gap = now - flow.last_out
-                if 0 < gap <= RTT_MAX_S:
-                    flow.rtt_samples.append(gap)
-                    rtt_sample = gap * 1000
-
-            self.catalog.observe(ip, size, rtt_sample, cidr=flow.cidr)
 
     def _scope(self, flow: Flow, verdict: dict, now: float, rec) -> dict:
         """Keep automatic filtering away from endpoints that are not a session.
@@ -459,7 +419,6 @@ class Engine:
             }
         )
         self._match_count += 1
-        self._last_match_ended = now
         self._soft_pinned_ip = None
         self._searching_since = now if self._filtering else None
         return {"match": match, "port": flow.port, "ip": flow.ip}

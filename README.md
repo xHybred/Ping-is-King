@@ -8,8 +8,8 @@
 
 I built this because the game kept putting me on servers I did not want, and
 there was no setting to change that. COD Ping King (PiK) filters Call of Duty's
-UDP traffic on Windows: you choose the regions you will play on, and traffic to
-everything else is dropped.
+network traffic on Windows: you choose the regions you will play on, and
+connections to catalogued server ranges elsewhere are blocked.
 
 It is not a VPN, and it does not modify the game or read its memory. It observes
 the game's network traffic with ETW and blocks server ranges you do not want with
@@ -21,9 +21,9 @@ Windows Firewall rules. There is no kernel driver and no packet interception.
 
 ## What it does
 
-- Allow or block regions and cities, or set a radius around your home.
-- Block a match's server with one click. It becomes a /24 deny rule and applies
-  to the next search.
+- Allow or block regions, or set a radius around your home.
+- Block a match's server with one click. It becomes a /24 deny rule that the
+  next firewall sync applies.
 - Authentication, lobby, ownership and CDN endpoints are always allowed and stay
   out of the server lists.
 - Streamer mode hides your location and server addresses for screenshots and
@@ -42,24 +42,27 @@ leaving you searching; you can raise the delay or turn it off in Settings.
   them, and the app asks on launch.
 - Call of Duty installed. Any title from Modern Warfare (2019) onward: the app
   matches `cod.exe`, `vanguard.exe` and prefixed builds such as `cod25-cod.exe`,
-  so a renamed executable is still detected.
+  so future prefixed builds are still detected.
 
 ## Install
 
-1. Download `COD-Ping-King-2.1.0.exe` from the releases page.
+1. Download `COD-Ping-King-2.1.1.exe` from the releases page.
 2. Run it and allow the administrator prompt.
-3. Pick desktop and Start menu shortcuts if you want them.
+3. Pick a desktop shortcut if you want one; the Start menu entry is always
+   created.
 4. Launch the app. The setup wizard opens the first time.
 
-The app installs to `Program Files\Hybred Tools\COD PiK`. Settings, policy and catalog
-live in your Windows user profile, so reinstalling keeps them.
+By default the app installs to `Program Files\Hybred Tools\COD PiK`. Settings,
+policy and catalog live in your Windows user profile, so reinstalling keeps
+them.
 
 ## Updates
 
 The app checks GitHub Releases when it starts, and you can run the same check from
 Settings. When a newer version exists, a banner offers **Install now** or **Later**.
-Installing downloads the release, verifies the SHA-256 digest GitHub publishes for
-the asset, closes the app, runs the installer silently, and opens the app again.
+Installing downloads the release, verifies the SHA-256 digest when GitHub
+publishes one for the asset, closes the app, runs the installer silently, and
+opens the app again.
 The install directory is reused, and your settings, policy and catalog are outside
 it, so they survive. If the installer fails, the previous version reopens and the
 Updates section shows the exit code. Automatic checks can be turned off in Settings;
@@ -71,19 +74,20 @@ Click any screenshot to open the full-resolution version.
 
 ### 1. Check the basics
 
-The first screen confirms that the app is running elevated, that traffic capture
-started, and that the catalog is ready.
+The first screen confirms that the game was detected, that the app is running
+elevated, and that the catalog is ready.
 
 <a href="docs/screenshots/setup-1.png"><img src="docs/screenshots/setup-1.png" alt="Setup step 1: game, administrator and catalog checks" width="100%"></a>
 
 If that check fails, close the app and start it with **Run as administrator**.
-Without elevation it can still watch traffic, but it cannot filter.
+Without elevation it can still show the catalog, but it can neither observe
+traffic nor filter.
 
 ### 2. Set your home location
 
-Click **Detect location**, or click your area on the map. The radius and the
-recommendations measure from this point. You can change or reset it later on
-Regions.
+Click **Detect location**. If the lookup fails, close the wizard and click your
+area on the map; you can also move it later on Regions. The radius and the
+recommendations measure from this point.
 
 <a href="docs/screenshots/setup-2.png"><img src="docs/screenshots/setup-2.png" alt="Setup step 2: home location" width="100%"></a>
 
@@ -92,10 +96,12 @@ is sent.
 
 ### 3. Accept the recommended regions
 
-The wizard lists the closest regions it knows about, with ping where it has a
-measurement. Uncheck anything you would not play on, then click **Use
-recommended**. That switches the policy to allowlist mode and blocks servers it
-has not classified yet. The search guard is the way out if the list is too tight.
+The wizard lists the regions it recommends, with ping where it has a
+measurement. Click **Use recommended** to allow them all; you can fine-tune the
+list later on Regions. That switches the policy to allowlist mode and blocks
+catalogued servers outside those regions. Ranges the catalog has not located
+yet cannot be blocked, so the search guard is the way out if the list is too
+tight.
 
 <a href="docs/screenshots/setup-3.png"><img src="docs/screenshots/setup-3.png" alt="Setup step 3: recommended regions" width="100%"></a>
 
@@ -106,10 +112,11 @@ Start the game and play a match.
 ### Dashboard
 
 The dashboard shows filtering state, the current server with its city and
-provider, the deciding rule, latency and traffic, and recent matches. Latency is
-an estimate from reply timing. A server cannot reply faster than its tick rate,
-so the number bottoms out near 16 ms even when the route is longer. **Block** adds
-a match's server to the deny list; the same button turns into **Unblock**.
+provider, the deciding rule, latency and packet counts, and recent matches.
+Latency is an estimate from reply timing. A server cannot reply faster than its
+tick rate, so the number bottoms out near 16 ms even when the route is longer.
+**Block** adds a match's server to the deny list; the same button turns into
+**Unblock**.
 
 ### Regions
 
@@ -127,16 +134,16 @@ card both show which mode you are in.
 ### Servers
 
 This lists everything the app has seen or imported: city, provider, region,
-ping, bytes, verdict and when it was last seen. Search by city, address or
-provider, filter by verdict, sort any column. The CSV export contains the same
-rows.
+ping, bytes and verdict. Search by city, address or provider, filter by verdict,
+sort any column. The CSV export contains the same rows.
 
 The **Providers** card groups the catalog by hosting company, with server count,
 regions covered, observed ping and traffic. Each row can be **No rule**, **Allow
 only** or **Block**. A provider rule narrows the regions you already allow; it
 does not widen them, and a block beats an allow. Ranges with no provider pass.
-Game services ignore provider rules, and so does Steam relay traffic, since a
-block can otherwise leave a lobby on "Waiting for relay".
+Game services are excluded from block rules. Steam relay traffic is not, since
+it shares hosting ranges with match servers, so a provider block can leave a
+lobby on "Waiting for relay".
 
 <a href="docs/screenshots/servers.png"><img src="docs/screenshots/servers.png" alt="Servers screen" width="100%"></a>
 
@@ -154,21 +161,25 @@ imported under Settings.
 is on by default; turn it off if the close button should exit.
 
 **Startup** registers a logon task that runs elevated and minimized. A Run key
-cannot show a UAC prompt at sign-in, so the task is the only way to start hidden.
+cannot show a UAC prompt at sign-in, so the task is the only way to start
+hidden. **Filter when the app starts** restores the last pause state.
 
 **Filtering** has the search guard, its delay and the rule for unclassified
-endpoints. **Reset filtering options** restores both.
+endpoints. **Reset filtering options** restores the search guard, its delay and
+the unclassified-endpoint rule.
 
 **Rules and data** combines policy export and import with catalog refresh, CSV
-and discovered-server export, the data folder and catalog reset.
+and discovered-server export, the data folder, the firewall rule cleanup and
+catalog reset. The firewall cleanup only works while filtering is paused, and it
+removes rules a crash left behind.
 
 <a href="docs/screenshots/settings.png"><img src="docs/screenshots/settings.png" alt="Settings screen" width="100%"></a>
 
 ### Diagnostics
 
 Diagnostics lists version, elevation, traffic capture state,
-watched ports, firewall rule count, observed packet rate, service pins, scope and
-match count. Copy diagnostics, Copy log, Open log folder and Export
+watched ports, firewall rule count, observed packet rate, service pins, policy
+mode and match count. Copy diagnostics, Copy log, Open log folder and Export
 diagnostics sit at the top; Export writes the same text to Documents. Endpoints
 outside policy this session are in their own table with reason and time.
 
@@ -192,30 +203,29 @@ Every endpoint is classified in this order:
 
 1. **Game service pin** - always allow. Auth, lobby, ownership and CDN.
 2. **Deny rules** - ranges, clusters, regions, countries or providers.
-3. **Allow pins** - addresses you added yourself.
-4. **Allow rules** - regions, clusters or countries.
-5. **Provider allow** - if the list is not empty, only those hosts pass. Pins
+3. **Allow rules** - clusters, regions, countries, radius or addresses you
+   added yourself.
+4. **Provider allow** - if the list is not empty, only those hosts pass. Pins
    are exempt.
-6. **Radius** - clusters inside the circle around home.
-7. **Ping limit** - optional maximum estimated RTT.
-8. **Default** - allow or deny endpoints that are not in the catalog.
+5. **Ping limit** - optional maximum estimated RTT.
+6. **Default** - allow or deny endpoints that are not in the catalog.
 
-The catalog is grouped into clusters. Each time the policy or catalog changes,
-the app rebuilds block rules for every cluster the rules reject. The rules are
-UDP only, apply only to the game's process, and cover the /24 ranges in that
-cluster. While a match is live its /24 is left out, so changing a setting
-mid-game does not cut the match.
+The catalog is grouped into clusters. When the policy or catalog changes, the
+app rebuilds block rules for each cluster the rules reject, so the change reaches
+Windows Firewall without a restart. The rules are UDP only, apply only to the
+game's process, and cover every range in that cluster.
 
-Because this is a blocklist, a range that is not in the catalog can still
-receive the first packets. Once it is located and the rules sync, later traffic
-is dropped and the game sees a timeout. Unclassified ranges pass by default;
-that is the price of not intercepting.
+Because the rules only cover catalogued ranges, an address that is not in the
+catalog can still receive the first packets. Once it is located and the rules
+sync, later traffic is dropped and the game sees a timeout. Ranges with no
+location never enter a rule, so they pass; that is the price of not
+intercepting.
 
 The search guard clears the block rules while it is relaxed, so the game can
 find someone to play when nothing nearby is available. The rules return once a
-match starts. Game service endpoints are excluded from every block list, because
+match starts. Catalogued service ranges are left out of block lists, because
 Windows Firewall checks block rules before allow rules and an allow rule cannot
-override a block. The app leaves those ranges out instead.
+override a block.
 
 Rules are named `COD Ping King Block ...`, visible in Windows Firewall, and
 removed when filtering stops or the app exits. If it crashes, the next launch
@@ -229,14 +239,15 @@ goes into a firewall rule. There is no packet to hold.
 
 The bundled catalog comes from two community lists,
 [Geomate](https://github.com/hudra0/geomate) and
-[cod-server-list](https://github.com/zFF2/cod-server-list) (September 2026),
-geolocated with [ipwho.is](https://ipwho.is), plus whatever the app observes on
-your machine. Nearby addresses are grouped into clusters, and a cluster is what
-you allow or deny.
+[cod-server-list](https://github.com/zFF2/cod-server-list), plus whatever the
+app observes on your machine. The snapshot was built in October 2026 and located
+at build time; newly observed ranges are looked up with
+[ipwho.is](https://ipwho.is). Nearby addresses are grouped into clusters, and a
+cluster is what you allow or deny.
 
 cod-server-list also records the ASN and organisation for each address, so most
-ranges arrive with a provider attached. Geomate only carries an organisation name
-from the original lookup. Names are collapsed onto the four families that host
+ranges arrive with a provider attached. Geomate's ranges get their organisation
+from the build-time lookup. Names are collapsed onto the four families that host
 most Call of Duty servers (Google Cloud, Microsoft Azure, Amazon Web Services,
 Vultr) plus the smaller hosts that appear in the lists.
 
@@ -261,9 +272,10 @@ disabled while it is on because the YAML contains your coordinates. Turn streame
 mode on after setup; the wizard needs your real location.
 
 The app talks to two services, both optional: ipwho.is for location lookups
-(home and newly observed ranges) and GitHub for public list updates. Location
-lookups also return the network operator for that address, which is how the
-Servers screen knows who hosts it. There is no telemetry and no account.
+(home and newly observed ranges) and GitHub for public list updates and release
+checks. Location lookups also return the network operator for that address, which
+is how the Servers screen knows who hosts it. There is no telemetry and no
+account.
 
 ## Troubleshooting
 
@@ -278,18 +290,19 @@ is checked while filtering runs, and **Diagnostics** shows which file was
 matched.
 
 **A game closes while the app is running.** This was the WinDivert driver.
-2.0 does not load one. If an older install left the WinDivert service running,
-run `sc stop WinDivert` and `sc delete WinDivert` in an elevated terminal, or
-reboot. The app also removes the stale service at startup when it runs elevated.
+This version does not load one. If an older install left the WinDivert service
+running, run `sc stop WinDivert` and `sc delete WinDivert` in an elevated
+terminal, or reboot. The app also removes the stale service at startup when it
+runs elevated.
 
-**The wizard recommends nothing.** It needs a home location and at least one
-located cluster. Run **Settings -> Update from public lists**, then try again. A
-fresh catalog has no reply-time data, so the wizard falls back to distance and
-server count.
+**The wizard lists no ping-based recommendations.** It only shows regions under
+40 ms, so a fresh catalog says "No ping data yet". **Use recommended** still
+works: it falls back to the nearest regions, or the densest ones when no home is
+set. Run **Settings -> Update from public lists** for better data.
 
 **Stuck searching.** Check that at least one region is still allowed. The search
-guard lets unclassified endpoints through after 45 seconds, but it cannot help if
-every catalogued server near you is denied. Widen the radius or add a region.
+guard removes the block rules after 45 seconds, but it cannot help if every
+catalogued server near you is denied. Widen the radius or add a region.
 
 **Stuck on "Waiting for relay".** Relay and lobby hosts run on the same hosting
 providers as match servers, so a provider block can cut the relay and leave the
@@ -327,8 +340,9 @@ help. Reinstalling fixes a missing capture library.
   city label can still be wrong.
 - **Ping is estimated** from packet gaps, not read from the game. It can differ
   from the in-game number. It is only a hard rule if you enable the ping limit.
-- **IPv6 is handled at /48**, IPv4 at /24. A provider that rotates across many
-  /24s looks unclassified until the app sees it.
+- **IPv6 is not observed.** The capture reads IPv4 events only, so IPv6 game
+  traffic is never filtered. A provider that rotates across many /24s looks
+  unclassified until the app sees it.
 - **Public lists go stale.** They are community snapshots, not an official server
   directory.
 - **Anti-cheat and terms of service.** The app does not read game memory, inject
@@ -383,9 +397,11 @@ Tests:
 python -m pytest tests -q
 ```
 
-Build the one-folder executable:
+Build tools are not part of `requirements.txt`. Install PyInstaller, then build
+the one-folder executable:
 
 ```bat
+pip install pyinstaller
 python -m PyInstaller packaging\build.spec --noconfirm
 ```
 
@@ -398,7 +414,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-2.1.0.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-2.1.1.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 
@@ -415,8 +431,11 @@ python tools\build_brand.py
 | Policy | `%APPDATA%\cod-ping-king\policy.yaml` |
 | Settings | `%APPDATA%\cod-ping-king\config.json` |
 | Catalog | `%LOCALAPPDATA%\cod-ping-king\catalog.db` |
-| Log | `%LOCALAPPDATA%\cod-ping-king\app.log` (rotated at 1 MB, 3 files) |
+| Log | `%LOCALAPPDATA%\cod-ping-king\app.log` (rotated at 1 MB, keeping 3 backups) |
 | Policy export | `%USERPROFILE%\Documents\cod-ping-king-policy-<timestamp>.yaml` |
+| CSV export | `%APPDATA%\cod-ping-king\server-catalog.csv` |
+| Discovered export | `%USERPROFILE%\Documents\cod-ping-king-discovered-<timestamp>.json` |
+| Diagnostics export | `%USERPROFILE%\Documents\cod-ping-king-diagnostics-<timestamp>.txt` |
 
 Nothing is written to the install folder, so updating the app does not touch your
 regions or match history.
@@ -450,6 +469,7 @@ cod_region_filter/
   state.py     application state
   titlebar.py  native title bar colours
   tray.py      system tray icon and menu
+  updates.py   GitHub release check, download and installer launch
   ui/          HTML/CSS/JS interface
 data/          seed ranges and community list
 docs/          brand assets and screenshots
@@ -475,9 +495,3 @@ This tool is free and always will be. If it saves you time, you can help cover t
 Not affiliated with or endorsed by Activision Publishing, Inc. Call of Duty is a
 trademark of Activision Publishing, Inc. This project ships no game assets and
 uses no Call of Duty logos.
-
-
-
-
-
-

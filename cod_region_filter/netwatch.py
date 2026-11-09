@@ -92,7 +92,6 @@ class NetWatch(threading.Thread):
         self._session = ""
         self._packets = 0
         self._started_at = 0.0
-        self._sniffed = 0
         self._event_error_at = 0.0
 
     # -- status -----------------------------------------------------------
@@ -101,7 +100,6 @@ class NetWatch(threading.Thread):
     def status(self) -> dict:
         with self._lock:
             pids = self._pids
-            exes = self._exes
             games_found = list(self._games)
             ports = self._ports
             status = self._status
@@ -121,9 +119,6 @@ class NetWatch(threading.Thread):
             "watched": list(ports),
             "packets": packets,
             "packets_per_second": round(packets / elapsed, 1) if elapsed else 0,
-            "reopens": 0,
-            "sniffed": 0,
-            "sniff_sampled": 0,
         }
 
     def exe_paths(self) -> tuple[str, ...]:

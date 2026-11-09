@@ -63,6 +63,17 @@ def test_remove_firewall_rules_requires_paused_filtering(state, monkeypatch):
     assert cleared == [True]
 
 
+def test_manual_deny_ranges_are_sent_to_the_firewall(state):
+    state.catalog.observe("45.63.1.10", 400)
+    state.catalog.flush()
+    state._clusters = []
+
+    result = state.block_server("45.63.1.10")
+
+    assert result["ok"] is True
+    assert state._firewall_groups() == {"Manual": ["45.63.1.0/24"]}
+
+
 def test_recommended_policy_denies_unclassified_endpoints(state):
     state.set_home(40.6171, -80.587)
     result = state.apply_recommended(40)
@@ -144,6 +155,27 @@ def test_streamer_mode_hides_identifying_details(state):
     assert visible["policy_text"] != ""
     assert visible["policy_home"]["lat"] == pytest.approx(40.6171)
     assert visible["matches"][0]["cidr"] == "45.63.1.0/24"
+
+
+def test_pausing_filtering_clears_firewall(state, monkeypatch):
+    calls = []
+    monkeypatch.setattr(state.firewall, "sync", lambda exes, groups: calls.append((exes, groups)))
+    state.engine.set_filtering(True)
+
+    state.set_setting("filtering", False)
+
+    assert calls == [((), {})]
+    assert state.engine.filtering is False
+
+
+def test_installer_failure_code_is_reported(state, monkeypatch):
+    from cod_region_filter import state as state_mod
+
+    monkeypatch.setattr(state_mod.updates, "read_result", lambda: {"exit_code": 5})
+
+    state._read_update_result()
+
+    assert "code 5" in state._update_payload()["error"]
 
 
 def test_theme_names_accept_legacy_values(state):
