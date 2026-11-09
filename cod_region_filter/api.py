@@ -44,6 +44,7 @@ class Api:
             "state": status["state"],
             "capture": status["capture"],
             "catalog_update": status["catalog_update"],
+            "update": status["update"],
             "matches": self.state.matches_payload(10),
             "stats": self.state.catalog.stats(),
             "regions": self.state.regions_payload(),
@@ -64,6 +65,7 @@ class Api:
             "driver_error": status["driver_error"],
             "summary": status["summary"],
             "catalog_update": status["catalog_update"],
+            "update": status["update"],
             "matches": self.state.matches_payload(10),
             "regions": self.state.regions_payload(),
         }
@@ -154,8 +156,24 @@ class Api:
     def reset_catalog(self) -> dict:
         return self.state.reset_catalog()
 
+    def remove_firewall_rules(self) -> dict:
+        return self.state.remove_firewall_rules()
+
     def update_catalog(self) -> dict:
         return self.state.update_catalog()
+
+    def check_updates(self) -> dict:
+        return self.state.check_updates(manual=True)
+
+    def download_update(self) -> dict:
+        return self.state.download_update()
+
+    def install_update(self) -> dict:
+        result = self.state.install_update()
+        if result.get("ok"):
+            # The helper waits for this process to exit before running Setup.
+            threading.Thread(target=self._quit_soon, name="update-quit", daemon=True).start()
+        return result
 
     def open_folder(self, which: str = "policy") -> dict:
         target = {

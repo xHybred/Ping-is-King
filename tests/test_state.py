@@ -49,6 +49,20 @@ def test_match_server_can_be_blocked_and_unblocked(state):
     assert state.policy_engine.policy.deny.cidrs == []
 
 
+def test_remove_firewall_rules_requires_paused_filtering(state, monkeypatch):
+    cleared = []
+    monkeypatch.setattr(state.firewall, "clear", lambda: cleared.append(True))
+
+    state.engine.set_filtering(True)
+    blocked = state.remove_firewall_rules()
+    assert blocked["ok"] is False
+    assert cleared == []
+
+    state.engine.set_filtering(False)
+    assert state.remove_firewall_rules()["ok"] is True
+    assert cleared == [True]
+
+
 def test_recommended_policy_denies_unclassified_endpoints(state):
     state.set_home(40.6171, -80.587)
     result = state.apply_recommended(40)

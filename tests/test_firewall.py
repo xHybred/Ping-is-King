@@ -14,12 +14,13 @@ def test_rule_writer_never_shows_a_console(monkeypatch):
 
     monkeypatch.setattr(firewall.subprocess, "run", fake_run)
     fw = firewall.Firewall()
-    fw._apply(("C:\\game\\cod.exe",), ("203.0.113.0/24",))
+    fw._apply(("C:\\game\\cod.exe",), (("US-NJ", ("203.0.113.0/24",)),))
 
     assert calls
     kwargs = calls[0][1]
     assert kwargs["creationflags"] & 0x08000000
     assert kwargs["startupinfo"].wShowWindow == subprocess.SW_HIDE
+    assert firewall._rule_name("US-NJ", 0) == "COD Ping King Block US-NJ 0"
 
 
 def test_rapid_changes_collapse_into_one_apply():
@@ -27,18 +28,18 @@ def test_rapid_changes_collapse_into_one_apply():
     applied = []
     done = threading.Event()
 
-    def fake_apply(exes, cidrs):
-        applied.append(cidrs)
+    def fake_apply(exes, groups):
+        applied.append(groups)
         done.set()
 
     fw._apply = fake_apply
     fw.start()
     try:
-        fw.sync(("C:\\game\\cod.exe",), ("198.51.100.0/24",))
-        fw.sync(("C:\\game\\cod.exe",), ("203.0.113.0/24",))
-        fw.sync(("C:\\game\\cod.exe",), ("192.0.2.0/24",))
+        fw.sync(("C:\\game\\cod.exe",), {"A": ["198.51.100.0/24"]})
+        fw.sync(("C:\\game\\cod.exe",), {"B": ["203.0.113.0/24"]})
+        fw.sync(("C:\\game\\cod.exe",), {"C": ["192.0.2.0/24"]})
         assert done.wait(3.0)
-        assert applied == [("192.0.2.0/24",)]
+        assert applied == [(("C", ("192.0.2.0/24",)),)]
     finally:
         fw._stop_event.set()
         fw._wake.set()

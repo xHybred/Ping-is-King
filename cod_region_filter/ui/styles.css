@@ -429,6 +429,7 @@ details.advanced .setting-row:first-of-type { margin-top: 2px; }
 .banner-warn strong { color: var(--warn); }
 .banner-info { background: var(--accent-weak); }
 .banner-info strong { color: var(--accent); }
+.banner-actions { display: flex; gap: 6px; flex: none; }
 
 /* ---------- dashboard ---------- */
 

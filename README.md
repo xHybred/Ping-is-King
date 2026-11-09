@@ -46,13 +46,24 @@ leaving you searching; you can raise the delay or turn it off in Settings.
 
 ## Install
 
-1. Download `COD-Ping-King-2.0.3.exe` from the releases page.
+1. Download `COD-Ping-King-2.1.0.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick desktop and Start menu shortcuts if you want them.
 4. Launch the app. The setup wizard opens the first time.
 
-The app installs to `Program Files\COD Ping King`. Settings, policy and catalog
+The app installs to `Program Files\Hybred Tools\COD PiK`. Settings, policy and catalog
 live in your Windows user profile, so reinstalling keeps them.
+
+## Updates
+
+The app checks GitHub Releases when it starts, and you can run the same check from
+Settings. When a newer version exists, a banner offers **Install now** or **Later**.
+Installing downloads the release, verifies the SHA-256 digest GitHub publishes for
+the asset, closes the app, runs the installer silently, and opens the app again.
+The install directory is reused, and your settings, policy and catalog are outside
+it, so they survive. If the installer fails, the previous version reopens and the
+Updates section shows the exit code. Automatic checks can be turned off in Settings;
+the manual check still works.
 
 ## Setup, step by step
 
@@ -387,7 +398,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-2.0.3.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-2.1.0.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 
@@ -414,7 +425,8 @@ regions or match history.
 
 Use the entry in Windows Settings or the Start menu. The uninstaller asks whether
 to delete your data; answer No to keep your regions, catalog and history for a
-later install.
+later install. It also removes any `COD Ping King Block` firewall rules left
+behind, so an uninstalled copy cannot keep filtering traffic.
 
 ## Project layout
 
@@ -422,7 +434,7 @@ later install.
 cod_region_filter/
   app.py       entry point, window and tray wiring
   api.py       JS-to-Python bridge
-  capture.py   legacy WinDivert service cleanup
+  legacy.py    WinDivert service cleanup
   catalog.py   SQLite range catalog and clustering
   catalog_update.py  public list download and parsing
   engine.py    flow tracking, match detection, search guard

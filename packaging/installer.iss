@@ -2,7 +2,7 @@
 ;   iscc packaging\installer.iss
 
 #define AppName "COD Ping King"
-#define AppVersion "2.0.3"
+#define AppVersion "2.1.0"
 #define AppExe "CODPingKing.exe"
 
 ; Override with iscc /DDistDir=..\dist-next when the default build is locked by a running copy.
@@ -14,9 +14,9 @@
 AppId={{7E3B9C41-5B0A-4F2D-9C63-2D9A1E5B7C11}
 AppName={#AppName}
 AppVersion={#AppVersion}
-AppPublisher=COD Ping King
+AppPublisher=Hybred Tools
 SetupIconFile=icon.ico
-DefaultDirName={autopf}\COD Ping King
+DefaultDirName={autopf}\Hybred Tools\COD PiK
 DefaultGroupName={#AppName}
 OutputDir={#DistDir}\installer
 OutputBaseFilename=COD-Ping-King-{#AppVersion}
@@ -30,8 +30,10 @@ AppMutex=Local\CODPingKing.SingleInstance
 CloseApplications=yes
 ArchitecturesInstallIn64BitMode=x64compatible
 UninstallDisplayIcon={app}\{#AppExe}
-UsePreviousAppDir=no
-VersionInfoVersion=2.0.3.0
+; Keep the directory a previous install used, so updates land in place even
+; when the user chose a custom folder. New installs get the path above.
+UsePreviousAppDir=yes
+VersionInfoVersion=2.1.0.0
 VersionInfoDescription={#AppName} setup
 
 [InstallDelete]
@@ -76,10 +78,24 @@ begin
   Sleep(300);
 end;
 
+{ A crash can leave block rules behind. Setup and removal both clear them so an
+  uninstalled copy cannot keep filtering traffic. }
+procedure RemoveFirewallRules();
+var
+  ResultCode: Integer;
+begin
+  Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Remove-NetFirewallRule -DisplayName ''COD Ping King Block *'' -ErrorAction SilentlyContinue"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
+  begin
     StopDriverService();
+    RemoveFirewallRules();
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
@@ -87,7 +103,10 @@ var
   DataDir: String;
 begin
   if CurUninstallStep = usUninstall then
+  begin
     StopDriverService();
+    RemoveFirewallRules();
+  end;
 
   if CurUninstallStep = usPostUninstall then
   begin

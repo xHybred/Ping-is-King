@@ -15,7 +15,7 @@ const SCREEN_META = {
   servers: ["Servers", "Every endpoint the catalog knows about, and its verdict."],
   rules: ["Rules", "The policy file that decides what is allowed."],
   diagnostics: ["Diagnostics", "What the app sees, and where its files live."],
-  settings: ["Settings", "Appearance, filtering, compatibility and data."],
+  settings: ["Settings", "Appearance, filtering and data."],
 };
 
 // pywebview injects window.pywebview after the page scripts start, so the
@@ -39,6 +39,10 @@ const state = {
   lastPolicyText: "",
   currentRegionKey: null,
   regionPending: {},
+  updateDismissed: false,
+  updateAutoInstall: false,
+  updateInstallStarted: false,
+  updatePendingCheck: false,
   wizardPreview: new URLSearchParams(location.search).has("wizard"),
   busy: false,
 };
@@ -316,12 +320,35 @@ const demo = (() => {
     wizard_done: !new URLSearchParams(location.search).has("wizard"),
     minimize_to_tray: true,
     streamer_mode: false,
+    check_updates: true,
     theme: DEMO_PARAM
       ? new URLSearchParams(location.search).get("theme") || "midnight"
       : "midnight",
   };
 
   const demoLocation = { lat: 39.7684, lon: -86.1581, label: "Indianapolis, Indiana (39.77, -86.16)" };
+
+  const demoUpdateParams = new URLSearchParams(location.search);
+  const demoUpdateOffer = DEMO_PARAM && demoUpdateParams.has("update");
+  let demoUpdateState = {
+    checking: false,
+    manual: false,
+    checked: true,
+    available: demoUpdateOffer,
+    version: demoUpdateOffer ? "2.1.1" : "2.1.0",
+    notes: "",
+    size: demoUpdateOffer ? 28_400_000 : 0,
+    sha256: "",
+    url: "",
+    page: "",
+    downloading: false,
+    progress: 0,
+    downloaded: false,
+    installer: "",
+    installing: false,
+    error: "",
+  };
+  const demoUpdate = () => ({ ...demoUpdateState });
 
   const current = {
     remote_ip: "203.0.113.28",
@@ -427,7 +454,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "2.0.3",
+        version: "2.1.0",
         elevated: true,
         driver: true,
         driver_error: "",
@@ -448,6 +475,7 @@ soft_mode:
         firewall: { available: true, rules: 24, applying: false, error: "", last_ms: 640 },
         summary: summary(),
         catalog_update: { running: false, message: "", report: [], finished_at: 0 },
+        update: demoUpdate(),
         state: statePayload(),
         matches: matchesPayload(),
         stats: { ranges: 6442, observed_ranges: 214, bytes: 2_940_000_000 },
@@ -492,6 +520,7 @@ soft_mode:
         driver_error: "",
         summary: summary(),
         catalog_update: { running: false, message: "", report: [], finished_at: 0 },
+        update: demoUpdate(),
         matches: matchesPayload(),
         regions: regionsPayload(),
       };
@@ -556,6 +585,41 @@ soft_mode:
       return { ok: true };
     },
     set_filtering(on) { stateObj.filtering = on; config.filtering = on; return { ok: true, config }; },
+    check_updates() {
+      demoUpdateState = { ...demoUpdateState, checking: true, manual: true, checked: false, error: "", available: false };
+      window.setTimeout(() => {
+        demoUpdateState = {
+          ...demoUpdateState,
+          checking: false,
+          checked: true,
+          available: demoUpdateOffer,
+          version: demoUpdateOffer ? "2.1.1" : "2.1.0",
+        };
+      }, 700);
+      return { ok: true };
+    },
+    download_update() {
+      if (!demoUpdateState.available) return { ok: false, error: "No update is available." };
+      demoUpdateState = { ...demoUpdateState, downloading: true, progress: 0, downloaded: false };
+      const timer = window.setInterval(() => {
+        const next = Math.min(100, demoUpdateState.progress + 18);
+        demoUpdateState = { ...demoUpdateState, progress: next };
+        if (next >= 100) {
+          window.clearInterval(timer);
+          demoUpdateState = {
+            ...demoUpdateState,
+            downloading: false,
+            downloaded: true,
+            installer: "%LOCALAPPDATA%\\cod-ping-king\\updates\\COD-Ping-King-2.1.1.exe",
+          };
+        }
+      }, 240);
+      return { ok: true };
+    },
+    install_update() {
+      demoUpdateState = { ...demoUpdateState, installing: true };
+      return { ok: true };
+    },
     restart_capture() { return { ok: true }; },
     set_region_blocked(key, blocked) {
       const deny = new Set(policy.deny.regions);
@@ -591,6 +655,7 @@ soft_mode:
     export_diagnostics() { return { ok: true, path: "%USERPROFILE%\\Documents\\cod-ping-king-diagnostics.txt" }; },
     export_policy() { return { ok: true, path: "%USERPROFILE%\\Documents\\cod-ping-king-policy.yaml" }; },
     reset_catalog() { return { ok: true }; },
+    remove_firewall_rules() { return { ok: true }; },
     update_catalog() { return { ok: true }; },
     open_folder() { return { ok: true }; },
     relaunch_admin() { return { ok: false, error: "Preview mode" }; },
@@ -673,6 +738,36 @@ function renderChrome(boot) {
     $("#cancel-banner-text").textContent =
       `Left ${where}${howLong} because it is outside your regions. The game may drop you back to the menu.`;
   }
+  renderUpdateBanner(boot);
+}
+
+function renderUpdateBanner(boot) {
+  const u = boot.update || {};
+  const show = Boolean(u.available) && !state.updateDismissed;
+  $("#update-banner").hidden = !show;
+  if (!show) return;
+  const install = $("#update-install");
+  const later = $("#update-later");
+  let text = `Version ${u.version} is available. You are on ${boot.version}.`;
+  let label = "Install now";
+  let disabled = false;
+  if (u.installing) {
+    text = "Installing now. The app will close and reopen when it finishes.";
+    label = "Installing...";
+    disabled = true;
+  } else if (u.downloaded) {
+    text = `Version ${u.version} is downloaded and ready.`;
+    label = "Install and restart";
+  } else if (u.downloading) {
+    text = `Downloading version ${u.version}: ${u.progress || 0}%.`;
+    label = `${u.progress || 0}%`;
+    disabled = true;
+  }
+  $("#update-banner-title").textContent = u.downloaded ? "Update ready." : "Update available.";
+  $("#update-banner-text").textContent = text;
+  install.textContent = label;
+  install.disabled = disabled;
+  later.hidden = Boolean(u.downloading || u.installing);
 }
 
 function renderDashboard(boot) {
@@ -681,7 +776,7 @@ function renderDashboard(boot) {
 
   $("#stat-filtering").textContent = s.filtering ? "On" : "Off";
   $("#stat-filtering-sub").textContent = boot.elevated
-    ? (s.soft_active ? "Search guard lifted" : "Dropping blocked servers")
+    ? (s.soft_active ? "Search guard lifted" : "Blocking out-of-policy servers")
     : "Administrator access required";
 
   $("#stat-server").textContent = current ? (current.city || "Unclassified") : "Searching";
@@ -707,9 +802,9 @@ function renderDashboard(boot) {
   const ruleLabels = {
     region: "Allowed by region",
     pin: "Allowed by pin",
-    provider: current && /not allowed/i.test(current.reason) ? "Provider not allowed" : "Provider blocked",
+    provider: "Provider blocked",
     allowlist: "Not in allowlist",
-    deny: "Denied by rule",
+    deny: "Blocked by rule",
     unknown: "Unclassified",
     grace: "Settling in",
     platform: "Platform traffic",
@@ -769,7 +864,7 @@ function renderDashboard(boot) {
       <td class="num">${fmtPing(m.rtt_ms)}</td>
       <td class="num">${fmtDuration(m.duration_s)}</td>
       <td class="num">${fmtBytes(m.bytes)}</td>
-      <td><span class="verdict ${m.allowed ? "" : "blocked"}"><i></i>${m.allowed ? "Allowed" : "Not allowed"}</span><div class="hint">${esc(m.reason || "")}</div></td>
+      <td><span class="verdict ${m.allowed ? "" : "blocked"}"><i></i>${m.allowed ? "Allowed" : "Blocked"}</span><div class="hint">${esc(m.reason || "")}</div></td>
       <td class="num">${canBlock ? `<button class="btn btn-small match-block" data-ip="${esc(m.remote_ip)}" data-blocked="${m.blocked ? "1" : "0"}">${m.blocked ? "Unblock" : "Block"}</button>` : ""}</td>
     </tr>`).join("");
   $("#matches-empty").hidden = matches.length > 0;
@@ -1112,7 +1207,7 @@ function renderServers() {
       <td class="num">${fmtPing(s.rtt_ms)}</td>
       <td class="num">${s.packets ? s.packets.toLocaleString() : "--"}</td>
       <td class="num">${fmtBytes(s.bytes)}</td>
-      <td><span class="verdict ${s.allowed ? "" : "blocked"}"><i></i>${s.allowed ? "Allowed" : "Not allowed"}</span><div class="hint">${esc(s.verdict)}</div></td>
+      <td><span class="verdict ${s.allowed ? "" : "blocked"}"><i></i>${s.allowed ? "Allowed" : "Blocked"}</span><div class="hint">${esc(s.verdict)}</div></td>
     </tr>`).join("");
   $("#servers-empty").hidden = rows.length > 0;
   $("#servers-table").hidden = rows.length === 0;
@@ -1150,6 +1245,29 @@ function renderPolicyFacts() {
   notice.innerHTML = notices.map((n) => `<div>${esc(n)}</div>`).join("");
 }
 
+function renderUpdateFields(boot) {
+  const up = boot.update || {};
+  const cfg = boot.config || {};
+  $("#update-current").textContent = `Version ${boot.version}`;
+  $("#set-autoupdate").checked = cfg.check_updates !== false;
+  let text = "Checks GitHub Releases. Nothing is downloaded until you choose Install.";
+  if (up.installing) text = "Installing now. The app will close and reopen.";
+  else if (up.downloading) text = `Downloading version ${up.version}: ${up.progress || 0}%.`;
+  else if (up.downloaded) text = `Version ${up.version} is downloaded and ready to install.`;
+  else if (up.checking) text = "Checking GitHub for the latest release...";
+  else if (up.error) text = up.error;
+  else if (up.available) text = `Version ${up.version} is available.`;
+  else if (up.checked) text = "You are running the latest version.";
+  $("#update-status").textContent = text;
+  const install = $("#install-update");
+  install.hidden = !up.available;
+  install.textContent = up.downloaded ? "Install and restart" : "Download update";
+  install.disabled = Boolean(up.checking || up.downloading || up.installing);
+  const check = $("#check-updates");
+  check.disabled = Boolean(up.checking || up.downloading || up.installing);
+  check.textContent = up.checking ? "Checking..." : "Check for updates";
+}
+
 function renderSettings() {
   const boot = state.boot;
   const cfg = boot.config || {};
@@ -1166,6 +1284,7 @@ function renderSettings() {
   $("#set-geo").checked = Boolean(cfg.auto_geolocate);
   $("#show-seed").checked = Boolean(state.showSeed);
 
+  renderUpdateFields(boot);
   const stats = boot.stats || {};
   $("#catalog-facts").innerHTML = [
     ["Known ranges", (stats.ranges || 0).toLocaleString()],
@@ -1177,6 +1296,7 @@ function renderSettings() {
   $("#catalog-update-status").textContent = update.message
     || "Adds the Geomate and cod-server-list ranges to the local catalog.";
   $("#update-catalog").disabled = Boolean(update.running);
+  $("#remove-firewall").disabled = Boolean(boot.state && boot.state.filtering);
 
   const capture = boot.capture || {};
   const driverError = boot.driver_error || "";
@@ -1322,6 +1442,32 @@ async function poll() {
         refresh();
       }
     }
+    if (data.update) {
+      const previous = state.boot.update || {};
+      state.boot.update = data.update;
+      if (previous.checking && !data.update.checking && data.update.manual) {
+        if (data.update.error) toast(data.update.error, "bad");
+        else if (data.update.available) toast(`Version ${data.update.version} is available.`, "ok");
+        else if (data.update.checked) toast("You are running the latest version.", "ok");
+      }
+      if (state.updatePendingCheck && data.update.checked && !data.update.checking) {
+        state.updatePendingCheck = false;
+        if (data.update.error) toast(data.update.error, "bad");
+        else if (data.update.available) toast(`Version ${data.update.version} is available.`, "ok");
+        else toast("You are running the latest version.", "ok");
+      }
+      if (data.update.downloaded && state.updateAutoInstall && !state.updateInstallStarted) {
+        state.updateInstallStarted = true;
+        const result = await call("install_update");
+        if (!result.ok) {
+          state.updateAutoInstall = false;
+          state.updateInstallStarted = false;
+          toast(result.error || "Could not start the installer.", "bad");
+        } else {
+          toast("Installing update. The app will restart.", "ok");
+        }
+      }
+    }
     renderChrome(state.boot);
     if (state.screen === "dashboard") renderDashboard(state.boot);
     if (state.screen === "regions") {
@@ -1330,9 +1476,44 @@ async function poll() {
     }
     if (state.screen === "rules") renderPolicyFacts();
     if (state.screen === "diagnostics") renderSettings();
+    if (state.screen === "settings") renderUpdateFields(state.boot);
   } catch (err) {
     /* polling errors are transient during shutdown */
   }
+}
+
+async function beginUpdate() {
+  const u = state.boot.update || {};
+  if (!u.available) return;
+  const ok = await confirmDialog(
+    `Install COD Ping King ${u.version}?`,
+    "The app will close, install the update, and reopen. Your settings, policy and catalog stay where they are.",
+    "Install"
+  );
+  if (!ok) return;
+  state.updateAutoInstall = true;
+  state.updateInstallStarted = false;
+  if (u.downloaded) {
+    state.updateInstallStarted = true;
+    const result = await call("install_update");
+    if (!result.ok) {
+      state.updateAutoInstall = false;
+      state.updateInstallStarted = false;
+      toast(result.error || "Could not start the installer.", "bad");
+    } else {
+      toast("Installing update. The app will restart.", "ok");
+    }
+    return;
+  }
+  const result = await call("download_update");
+  if (!result.ok) {
+    state.updateAutoInstall = false;
+    toast(result.error || "Could not download the update.", "bad");
+    return;
+  }
+  toast(`Downloading version ${u.version}.`, "ok");
+  renderSettings();
+  renderUpdateBanner(state.boot);
 }
 
 async function mutate(promise, successMessage) {
@@ -1741,6 +1922,24 @@ function bindEvents() {
   // settings
   $("#set-startup").addEventListener("change", (e) => mutate(call("set_setting", "start_with_windows", e.target.checked), "Startup preference saved"));
   $("#set-autofilter").addEventListener("change", (e) => mutate(call("set_setting", "filtering", e.target.checked), "Startup filtering saved"));
+  $("#set-autoupdate").addEventListener("change", (e) => mutate(call("set_setting", "check_updates", e.target.checked), e.target.checked ? "Update checks on" : "Update checks off"));
+  $("#check-updates").addEventListener("click", async () => {
+    state.updatePendingCheck = true;
+    const result = await call("check_updates");
+    if (!result.ok) {
+      state.updatePendingCheck = false;
+      toast(result.error || "Could not check for updates.", "bad");
+      return;
+    }
+    toast("Checking for updates.", "ok");
+    renderSettings();
+  });
+  $("#update-later").addEventListener("click", () => {
+    state.updateDismissed = true;
+    renderUpdateBanner(state.boot);
+  });
+  $("#update-install").addEventListener("click", beginUpdate);
+  $("#install-update").addEventListener("click", beginUpdate);
   $("#set-geo").addEventListener("change", (e) => mutate(call("set_setting", "auto_geolocate", e.target.checked), "Catalog lookups updated"));
   $("#set-tray").addEventListener("change", (e) => mutate(call("set_setting", "minimize_to_tray", e.target.checked), e.target.checked ? "Close will minimize to tray" : "Close will quit the app"));
   $("#set-streamer").addEventListener("change", async (e) => {
@@ -1803,6 +2002,15 @@ function bindEvents() {
     const ok = await confirmDialog("Reset the catalog?", "All observed servers, locations and match history will be deleted. The policy file is kept.", "Reset");
     if (!ok) return;
     mutate(call("reset_catalog"), "Catalog reset");
+  });
+  $("#remove-firewall").addEventListener("click", async () => {
+    const ok = await confirmDialog(
+      "Remove all firewall rules?",
+      "Every COD Ping King block rule will be deleted. Filtering must stay paused until you resume it, which applies the rules again.",
+      "Remove rules"
+    );
+    if (!ok) return;
+    mutate(call("remove_firewall_rules"), "Firewall rules removed");
   });
 
   $("#setup-btn").addEventListener("click", () => openWizard());

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COD Ping King</title>
-<link rel="stylesheet" href="styles.css?v=2.0.3">
+<link rel="stylesheet" href="styles.css?v=2.1.0">
 </head>
 <body>
 <div id="app">
@@ -59,7 +59,7 @@
         </div>
       </div>
       <div class="rail-meta">
-        <span id="rail-version">v2.0.3</span>
+        <span id="rail-version">v2.1.0</span>
         <button class="link" id="rail-pause">Pause</button>
       </div>
     </div>
@@ -127,6 +127,17 @@
       <button class="btn btn-small" data-go="rules">Open rules</button>
     </div>
 
+    <div class="banner banner-info" id="update-banner" hidden>
+      <div>
+        <strong id="update-banner-title">Update available.</strong>
+        <span id="update-banner-text"></span>
+      </div>
+      <div class="banner-actions">
+        <button class="btn btn-small" id="update-later">Later</button>
+        <button class="btn btn-small btn-primary" id="update-install">Install now</button>
+      </div>
+    </div>
+
     <!-- Dashboard -->
     <section class="screen is-active" id="screen-dashboard">
       <div class="stat-grid">
@@ -146,7 +157,7 @@
           <span class="stat-sub" id="stat-rtt-sub">Approximate, from reply timing</span>
         </article>
         <article class="card stat">
-          <span class="stat-label">Traffic</span>
+          <span class="stat-label">Packets evaluated</span>
           <div class="stat-value" id="stat-denied">0</div>
           <span class="stat-sub" id="stat-denied-sub">0 in policy</span>
         </article>
@@ -464,6 +475,19 @@
         </article>
 
         <article class="card">
+          <div class="card-head"><div><h2>Updates</h2><p id="update-current">Version</p></div></div>
+          <div class="setting-row">
+            <div><strong>Check on launch</strong><span>Look for a newer release when the app starts.</span></div>
+            <label class="switch"><input type="checkbox" id="set-autoupdate"><span></span></label>
+          </div>
+          <p class="hint" id="update-status">Checks GitHub Releases. Nothing is downloaded until you choose Install.</p>
+          <div class="button-row">
+            <button class="btn btn-small" id="check-updates">Check for updates</button>
+            <button class="btn btn-small btn-primary" id="install-update" hidden>Install update</button>
+          </div>
+        </article>
+
+        <article class="card">
           <div class="card-head"><div><h2>Filtering</h2><p>How ambiguous endpoints are handled.</p></div></div>
           <p class="hint">Changes here apply immediately. Pause filtering on the Dashboard stops all of it.</p>
           <div class="setting-row">
@@ -505,6 +529,11 @@
                 <button class="btn btn-small" id="import-policy">Import policy</button>
                 <input type="file" id="import-policy-file" accept=".yaml,.yml" hidden>
               </div>
+              <h3>Windows Firewall</h3>
+              <p class="hint">Rules are removed when filtering stops and when the app exits. Pause filtering to remove any that a crash left behind.</p>
+              <div class="button-row">
+                <button class="btn btn-small btn-danger-ghost" id="remove-firewall">Remove firewall rules</button>
+              </div>
             </div>
             <div>
               <h3>Catalog</h3>
@@ -542,8 +571,8 @@
 </div>
 
 <div class="toast-stack" id="toasts" aria-live="polite"></div>
-<script src="world.js?v=2.0.3"></script>
-<script src="app.js?v=2.0.3"></script>
+<script src="world.js?v=2.1.0"></script>
+<script src="app.js?v=2.1.0"></script>
 </body>
 </html>
 

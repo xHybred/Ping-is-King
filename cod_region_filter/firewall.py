@@ -1,10 +1,10 @@
 """Windows Firewall enforcement, used instead of a packet driver.
 
-Block rules are scoped to the game executable and to UDP, so the rest of the
-machine is untouched. Rules are named with one prefix and rebuilt together;
-Windows Firewall gives block rules priority over allow rules, so service
-endpoints stay reachable by leaving their ranges out of the block list rather
-than by adding allow rules on top.
+Rules are scoped to the game executable and to UDP, and one rule is kept per
+region so a policy change touches only the regions that changed. Windows
+Firewall gives block rules priority over allow rules, so service endpoints stay
+reachable by leaving their ranges out of the block list rather than by adding
+allow rules on top.
 """
 
 from __future__ import annotations
@@ -17,8 +17,11 @@ import threading
 import time
 
 PREFIX = "COD Ping King Block"
-CHUNK = 600
 MIN_GAP_S = 3.0
+
+# Rule groups are (name, cidrs) pairs. A region key is used as the name so a
+# later sync can update that region without touching the others.
+Groups = tuple[tuple[str, tuple[str, ...]], ...]
 
 
 def _hidden_start() -> tuple[int, subprocess.STARTUPINFO | None]:
@@ -39,6 +42,10 @@ def _ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def _rule_name(group: str, exe_index: int) -> str:
+    return f"{PREFIX} {group} {exe_index}"
+
+
 class Firewall(threading.Thread):
     """Applies the latest block set on a worker thread, coalescing requests."""
 
@@ -48,7 +55,7 @@ class Firewall(threading.Thread):
         self._lock = threading.Lock()
         self._wake = threading.Event()
         self._stop_event = threading.Event()
-        self._pending: tuple[tuple[str, ...], tuple[str, ...]] | None = None
+        self._pending: tuple[tuple[str, ...], Groups] | None = None
         self._signature: tuple | None = None
         self._rules = 0
         self._applying = False
@@ -67,19 +74,27 @@ class Firewall(threading.Thread):
                 "last_ms": self._last_ms,
             }
 
-    def sync(self, exes: tuple[str, ...] | list[str], cidrs: tuple[str, ...] | list[str]) -> None:
+    def sync(self, exes: tuple[str, ...] | list[str], groups: dict[str, list[str]]) -> None:
         exes = tuple(sorted({exe for exe in exes if exe}))
-        cidrs = tuple(sorted(set(cidrs)))
-        signature = (exes, hashlib.sha1("\n".join(cidrs).encode()).hexdigest())
+        cleaned: list[tuple[str, tuple[str, ...]]] = []
+        for name, cidrs in sorted(groups.items()):
+            values = tuple(sorted(set(cidrs)))
+            if values:
+                cleaned.append((name, values))
+        groups = tuple(cleaned)
+        signature = (
+            exes,
+            tuple((name, hashlib.sha1("\n".join(cidrs).encode()).hexdigest()) for name, cidrs in groups),
+        )
         with self._lock:
             if signature == self._signature and self._pending is None:
                 return
             self._signature = signature
-            self._pending = (exes, cidrs)
+            self._pending = (exes, groups)
         self._wake.set()
 
     def clear(self) -> None:
-        self.sync((), ())
+        self.sync((), {})
 
     def close(self) -> None:
         self.clear()
@@ -107,7 +122,7 @@ class Firewall(threading.Thread):
             self._last_apply = time.monotonic()
             self._apply(*pending)
 
-    def _apply(self, exes: tuple[str, ...], cidrs: tuple[str, ...]) -> None:
+    def _apply(self, exes: tuple[str, ...], groups: Groups) -> None:
         started = time.monotonic()
         with self._lock:
             self._applying = True
@@ -116,25 +131,42 @@ class Firewall(threading.Thread):
         try:
             lines = [
                 "$ErrorActionPreference = 'Stop'",
-                "Get-NetFirewallRule -DisplayName 'COD Ping King Block *' "
-                "-ErrorAction SilentlyContinue | Remove-NetFirewallRule",
+                "$keep = @()",
             ]
-            if exes and cidrs:
-                index = 0
-                for exe in exes:
-                    for start in range(0, len(cidrs), CHUNK):
-                        chunk = cidrs[start : start + CHUNK]
-                        addresses = ",".join(_ps_quote(cidr) for cidr in chunk)
-                        lines.append(
-                            "New-NetFirewallRule "
-                            f"-DisplayName 'COD Ping King Block {index}' "
-                            "-Direction Outbound -Action Block -Protocol UDP "
-                            f"-Program {_ps_quote(exe)} "
-                            f"-RemoteAddress @({addresses}) "
-                            "-Profile Any -Enabled True | Out-Null"
+            if exes and groups:
+                for exe_index, exe in enumerate(exes):
+                    for name, cidrs in groups:
+                        rule = _rule_name(name, exe_index)
+                        addresses = ",".join(_ps_quote(cidr) for cidr in cidrs)
+                        lines.extend(
+                            [
+                                f"$name = {_ps_quote(rule)}",
+                                "$keep += $name",
+                                "$rule = Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue",
+                                "if ($null -eq $rule) {",
+                                "  New-NetFirewallRule -DisplayName $name "
+                                "-Direction Outbound -Action Block -Protocol UDP "
+                                f"-Program {_ps_quote(exe)} "
+                                f"-RemoteAddress @({addresses}) "
+                                "-Profile Any -Enabled True | Out-Null",
+                                "} else {",
+                                "  $rule | Get-NetFirewallApplicationFilter "
+                                f"| Set-NetFirewallApplicationFilter -Program {_ps_quote(exe)}",
+                                "  $rule | Get-NetFirewallAddressFilter "
+                                f"| Set-NetFirewallAddressFilter -RemoteAddress @({addresses})",
+                                "  $rule | Set-NetFirewallRule -Enabled True -Action Block -Direction Outbound",
+                                "}",
+                            ]
                         )
-                        index += 1
-                rules = index
+                        rules += 1
+            # Only remove rules that are no longer wanted, and only after the
+            # new ones exist, so there is never a window with no block rules.
+            lines.append(
+                "Get-NetFirewallRule -DisplayName 'COD Ping King Block *' "
+                "-ErrorAction SilentlyContinue | "
+                "Where-Object { $keep -notcontains $_.DisplayName } | "
+                "Remove-NetFirewallRule"
+            )
             script = "\n".join(lines)
             path = os.path.join(tempfile.gettempdir(), "cod-ping-king-firewall.ps1")
             with open(path, "w", encoding="utf-8") as handle:
@@ -152,7 +184,7 @@ class Firewall(threading.Thread):
                 ],
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=180,
                 creationflags=flags,
                 startupinfo=startupinfo,
             )
@@ -171,7 +203,10 @@ class Firewall(threading.Thread):
                 self._applying = False
                 self._last_ms = elapsed
             if rules:
-                self.log(f"firewall: {rules} block rules, {len(cidrs)} ranges in {elapsed}ms")
+                self.log(
+                    f"firewall: {rules} block rules, "
+                    f"{sum(len(cidrs) for _, cidrs in groups)} ranges in {elapsed}ms"
+                )
             elif exes:
                 self.log("firewall: no rules applied")
             else:

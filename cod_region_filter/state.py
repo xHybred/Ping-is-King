@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sys
 import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import catalog_update, firewall as firewall_mod, games, geo, netwatch, paths, policy as policy_mod, services, startup, titlebar
+from . import catalog_update, firewall as firewall_mod, games, geo, netwatch, paths, policy as policy_mod, services, startup, titlebar, updates
 from . import __version__
 from .catalog import Catalog, cidr_for, provider_label
 from .legacy import unload_driver
@@ -28,6 +29,7 @@ DEFAULT_CONFIG = {
     "minimize_to_tray": True,
     "streamer_mode": False,
     "theme": "midnight",
+    "check_updates": True,
 }
 
 RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
@@ -116,7 +118,28 @@ class AppState:
         self._seen_version = -1
         self._catalog_lock = threading.Lock()
         self._catalog_update = {"running": False, "message": "", "report": [], "finished_at": 0.0}
+        self._update_lock = threading.Lock()
+        self._update_thread: threading.Thread | None = None
+        self._update = {
+            "checking": False,
+            "manual": False,
+            "checked": False,
+            "available": False,
+            "version": "",
+            "notes": "",
+            "size": 0,
+            "sha256": "",
+            "url": "",
+            "page": "",
+            "downloading": False,
+            "progress": 0,
+            "downloaded": False,
+            "installer": "",
+            "installing": False,
+            "error": "",
+        }
         self._logger = logging.getLogger("cod-ping-king")
+        self._read_update_result()
         self.refresh_catalog()
         self._pin_services()
         self._log_policy("loaded")
@@ -180,6 +203,7 @@ class AppState:
             unload_driver(self.log)
             self.capture.start()
             self._capture_started = True
+        self._start_launch_check()
 
     def restart_capture(self) -> dict:
         """Restart observation, e.g. after ETW was stopped by another tool."""
@@ -274,38 +298,40 @@ class AppState:
             self._stop.wait(1.0)
 
     def _sync_firewall(self) -> None:
-        """Hand the firewall worker the set of ranges that should be blocked.
+        """Hand the firewall worker the regions that should be blocked.
 
-        Firewall rules apply at connection time, so the search guard works by
-        removing every rule while it is relaxed. A live match keeps its own
-        /24 out of the block list, otherwise the next packet would be dropped
-        mid-game.
+        One rule per region means a policy change only touches the regions that
+        changed, and a match on an allowed server touches nothing at all. The
+        search guard works by removing every rule while it is relaxed.
         """
         if not (self.elevated and firewall_mod.available()):
             return
         if not self.engine.filtering:
-            self.firewall.sync((), ())
+            self.firewall.sync((), {})
             return
         exes = self.capture.exe_paths()
-        current = self.engine.current_match()
         if not exes:
-            self.firewall.sync((), ())
+            self.firewall.sync((), {})
             return
-        if current is None and self.engine.soft_active:
-            self.firewall.sync(exes, ())
+        if self.engine.soft_active:
+            self.firewall.sync(exes, {})
             return
-        keep = current["cidr"] if current else ""
-        cidrs: list[str] = []
+        groups: dict[str, list[str]] = {}
         for cluster in self._clusters:
             if self.policy_engine.decide("0.0.0.0", None, cluster)["allow"]:
                 continue
-            for cidr in cluster["cidrs"]:
-                cidrs.append(cidr)
-        if keep in cidrs:
-            # Only a disallowed server needs the exception. Removing it from an
-            # allowed match changed nothing but rewrote every rule.
-            cidrs.remove(keep)
-        self.firewall.sync(exes, cidrs)
+            groups.setdefault(cluster["region_key"], []).extend(cluster["cidrs"])
+        self.firewall.sync(exes, groups)
+
+    def remove_firewall_rules(self) -> dict:
+        if self.engine.filtering:
+            return {"ok": False, "error": "Pause filtering before removing firewall rules."}
+        if not firewall_mod.available():
+            return {"ok": False, "error": "Windows Firewall is not available."}
+        self.firewall.clear()
+        self.log("firewall rules removed from Settings")
+        return {"ok": True}
+
 
     def _queue_geo(self) -> None:
         rows = self.catalog.unlocated_observed(120)
@@ -758,6 +784,175 @@ class AppState:
             out.append(row)
         return out
 
+    def _read_update_result(self) -> None:
+        result = updates.read_result()
+        if not result:
+            return
+        try:
+            code = int(result.get("exit_code") or 0)
+        except (TypeError, ValueError):
+            return
+        if code not in (0, 3010):
+            self._update["error"] = (
+                f"Update failed (code {code}). The previous version is still installed."
+            )
+            self.log(f"update failed with installer code {code}")
+
+    def _update_payload(self) -> dict:
+        with self._update_lock:
+            data = dict(self._update)
+        data.pop("notes", None)
+        return data
+
+    def _start_launch_check(self) -> None:
+        if not self.config.get("check_updates", True):
+            return
+
+        def run() -> None:
+            if self._stop.wait(3.0):
+                return
+            self.check_updates(manual=False)
+
+        threading.Thread(target=run, name="update-launch", daemon=True).start()
+
+    def check_updates(self, manual: bool = True) -> dict:
+        with self._update_lock:
+            if self._update["checking"] or self._update["downloading"] or self._update["installing"]:
+                return {"ok": False, "error": "An update task is already running."}
+            self._update.update(
+                checking=True,
+                manual=bool(manual),
+                checked=False,
+                available=False,
+                version="",
+                notes="",
+                size=0,
+                sha256="",
+                url="",
+                page="",
+                downloading=False,
+                progress=0,
+                downloaded=False,
+                installer="",
+                error="",
+            )
+        self._update_thread = threading.Thread(
+            target=self._run_update_check, name="update-check", daemon=True
+        )
+        self._update_thread.start()
+        return {"ok": True}
+
+    def _run_update_check(self) -> None:
+        try:
+            release = updates.latest_release()
+        except updates.UpdateError as exc:
+            self._finish_update_check(error=str(exc))
+            return
+        except Exception as exc:
+            self._finish_update_check(error=f"Could not check for updates: {exc}")
+            return
+        newer = updates.is_newer(release.get("version", ""), APP_VERSION)
+        with self._update_lock:
+            manual = bool(self._update["manual"])
+            keep_error = "" if manual else self._update["error"]
+            self._update.update(
+                checking=False,
+                checked=True,
+                available=newer,
+                version=release.get("version", ""),
+                notes=release.get("notes", ""),
+                size=int(release.get("size") or 0),
+                sha256=release.get("sha256", ""),
+                url=release.get("url", "") if newer else "",
+                page=release.get("page", ""),
+                error=keep_error,
+            )
+        self.log(
+            f"update check: latest {release.get('version')} "
+            f"{'available' if newer else 'already current'}"
+        )
+
+    def _finish_update_check(self, error: str) -> None:
+        with self._update_lock:
+            self._update.update(checking=False, checked=True, available=False, error=error)
+        self.log(f"update check failed: {error}")
+
+    def download_update(self) -> dict:
+        with self._update_lock:
+            if self._update["downloading"] or self._update["installing"]:
+                return {"ok": False, "error": "An update task is already running."}
+            if not self._update["available"] or not self._update["url"]:
+                return {"ok": False, "error": "No update is available."}
+            version = self._update["version"]
+            url = self._update["url"]
+            sha = self._update["sha256"]
+            size = int(self._update["size"] or 0)
+            target = updates.installer_path(version)
+            if target.is_file() and sha and updates.sha256_file(target) == sha:
+                self._update.update(
+                    downloaded=True, progress=100, installer=str(target), error=""
+                )
+                return {"ok": True}
+            self._update.update(downloading=True, progress=0, downloaded=False, error="")
+        self._update_thread = threading.Thread(
+            target=self._run_update_download,
+            args=(url, target, sha, size),
+            name="update-download",
+            daemon=True,
+        )
+        self._update_thread.start()
+        return {"ok": True}
+
+    def _run_update_download(self, url: str, target: Path, sha: str, size: int) -> None:
+        def progress(done: int, total: int) -> None:
+            percent = int(done * 100 / total) if total else 0
+            with self._update_lock:
+                self._update["progress"] = max(0, min(percent, 99))
+
+        try:
+            updates.download(url, target, sha, size, progress)
+        except updates.UpdateError as exc:
+            with self._update_lock:
+                self._update.update(downloading=False, progress=0, error=str(exc))
+            self.log(f"update download failed: {exc}")
+            return
+        except Exception as exc:
+            with self._update_lock:
+                self._update.update(
+                    downloading=False, progress=0, error=f"Download failed: {exc}"
+                )
+            self.log(f"update download failed: {exc}")
+            return
+        with self._update_lock:
+            self._update.update(
+                downloading=False, progress=100, downloaded=True, installer=str(target), error=""
+            )
+        self.log(f"update downloaded: {target.name}")
+
+    def install_update(self) -> dict:
+        with self._update_lock:
+            if self._update["installing"]:
+                return {"ok": False, "error": "The installer is already starting."}
+            if not self._update["downloaded"] or not self._update["installer"]:
+                return {"ok": False, "error": "Download the update first."}
+            installer = Path(self._update["installer"])
+            version = self._update["version"]
+        if not self.elevated:
+            return {"ok": False, "error": "Restart as administrator to install updates."}
+        args = [] if getattr(sys, "frozen", False) else ["-m", "cod_region_filter"]
+        try:
+            updates.launch_installer(
+                installer, Path(sys.executable), os.getpid(), version, args
+            )
+        except updates.UpdateError as exc:
+            return {"ok": False, "error": str(exc)}
+        except OSError as exc:
+            return {"ok": False, "error": f"Could not start the installer: {exc}"}
+        with self._update_lock:
+            self._update["installing"] = True
+        self.log(f"update installer launched: {installer.name}")
+        return {"ok": True}
+
     def status(self) -> dict:
         capture = self.capture.status
         # Capture already enumerates the game every five seconds; polling it again
@@ -800,6 +995,7 @@ class AppState:
             "policy_error": self.policy_error,
             "summary": self.policy_engine.summary(),
             "catalog_update": dict(self._catalog_update),
+            "update": self._update_payload(),
             "streamer": streamer,
         }
 
