@@ -46,3 +46,46 @@ def test_bad_event_shape_is_ignored():
     watch._on_event(("nope", {}))
     watch._on_event((42, {}))
     assert engine.calls == []
+
+
+def test_run_stops_the_etw_trace_when_stopped(monkeypatch):
+    import cod_region_filter.netwatch as netwatch
+
+    traces = []
+
+    class FakeTrace:
+        def __init__(self, session_name, providers, event_callback):
+            self.session_name = session_name
+            self.stopped = False
+            traces.append(self)
+
+        def start(self):
+            pass
+
+        def stop(self):
+            self.stopped = True
+
+    class FakeEtwModule:
+        ETW = FakeTrace
+
+        @staticmethod
+        def GUID(value):
+            return value
+
+        @staticmethod
+        def ProviderInfo(*args, **kwargs):
+            return object()
+
+    monkeypatch.setattr(netwatch, "available", lambda: True)
+    monkeypatch.setattr(netwatch, "_admin", lambda: True)
+    monkeypatch.setattr(netwatch, "_stop_stale_sessions", lambda log: None)
+    monkeypatch.setattr(netwatch, "etw", FakeEtwModule())
+
+    watch = NetWatch(FakeEngine())
+    watch._refresh_targets = lambda: None
+    watch._stop_event.set()  # the refresh loop exits on the first check
+
+    watch.run()  # used to raise AttributeError here on the stop path
+
+    assert len(traces) == 1
+    assert traces[0].stopped is True

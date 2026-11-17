@@ -170,7 +170,7 @@ class NetWatch(threading.Thread):
             self._status = "waiting for game"
         while not self._stop_event.wait(5.0):
             self._refresh_targets()
-        self._stop_event_trace()
+        self._stop_trace()
 
     def _stop_trace(self) -> None:
         trace = self._trace
