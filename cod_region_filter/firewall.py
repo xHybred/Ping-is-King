@@ -27,9 +27,12 @@ from . import paths
 PREFIX = "COD Ping King Block"
 MIN_GAP_S = 3.0
 STATE_NAME = "firewall-state.json"
+# Windows writes a rule slowly, and a full catalog is six thousand addresses.
+# Few large rules finish; one rule per region (about eighty) timed out at 180s.
+CHUNK = 1000
 
-# Rule groups are (name, cidrs) pairs. A region key is used as the name so a
-# later sync can update that region without touching the others.
+# Rule groups are (name, cidrs) pairs. Region sets are flattened into chunk
+# names before they reach the rule writer.
 Groups = tuple[tuple[str, tuple[str, ...]], ...]
 
 
@@ -53,6 +56,19 @@ def _ps_quote(value: str) -> str:
 
 def _rule_name(group: str, exe_index: int) -> str:
     return f"{PREFIX} {group} {exe_index}"
+
+
+def _chunk(groups: Groups) -> Groups:
+    """Flatten the region sets into a few large rules.
+
+    The firewall API cost scales with the number of rules much more than with
+    the addresses inside one, and a region-per-rule set timed out on first run.
+    """
+    flat = sorted({cidr for _, cidrs in groups for cidr in cidrs})
+    return tuple(
+        (f"Set {index // CHUNK + 1}", tuple(flat[index : index + CHUNK]))
+        for index in range(0, len(flat), CHUNK)
+    )
 
 
 def _signature_key(exes: tuple[str, ...], groups: Groups) -> str:
@@ -101,6 +117,7 @@ class Firewall(threading.Thread):
         self._error = ""
         self._last_ms = 0
         self._last_apply = 0.0
+        self._retry_at = 0.0
         self._remove_requested = False
 
     @property
@@ -125,6 +142,7 @@ class Firewall(threading.Thread):
             if values:
                 cleaned.append((name, values))
         groups = tuple(cleaned)
+        groups = _chunk(groups)
         key = _signature_key(exes, groups)
         with self._lock:
             if (
@@ -135,6 +153,8 @@ class Firewall(threading.Thread):
                 if not exes and not groups:
                     return
                 if self._enabled:
+                    return
+                if time.monotonic() < self._retry_at:
                     return
             self._signature = key
             self._pending = (exes, groups, key)
@@ -245,6 +265,7 @@ class Firewall(threading.Thread):
             return False
         self._applied = dict(desired)
         self._enabled = True
+        self._retry_at = 0.0
         self._rules = len(desired)
         self._saved_key = key
         self._saved_rules = len(desired)
@@ -338,12 +359,16 @@ class Firewall(threading.Thread):
             self._run_script("\n".join(lines))
             self._applied = dict(desired)
             self._enabled = True
+            self._retry_at = 0.0
             self._rules = len(desired)
             self._saved_key = key
             self._saved_rules = len(desired)
             _save_state(key, len(desired))
         except Exception as exc:
             self._applied = None
+            # A failed build can take minutes. Retrying every sync turns that
+            # into a loop of PowerShell processes, so wait before trying again.
+            self._retry_at = time.monotonic() + 60.0
             with self._lock:
                 self._error = f"{type(exc).__name__}: {exc}"
             self.log(f"firewall failed: {type(exc).__name__}: {exc}")

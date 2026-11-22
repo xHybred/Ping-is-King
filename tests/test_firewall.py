@@ -1,5 +1,6 @@
 import subprocess
 import threading
+import time
 import types
 
 from cod_region_filter import firewall
@@ -47,7 +48,7 @@ def test_rapid_changes_collapse_into_one_apply(monkeypatch):
         fw.sync(("C:\\game\\cod.exe",), {"B": ["203.0.113.0/24"]})
         fw.sync(("C:\\game\\cod.exe",), {"C": ["192.0.2.0/24"]})
         assert done.wait(3.0)
-        assert applied == [(("C", ("192.0.2.0/24",)),)]
+        assert applied == [(("Set 1", ("192.0.2.0/24",)),)]
     finally:
         fw._stop_event.set()
         fw._wake.set()
@@ -70,6 +71,19 @@ def test_only_changed_regions_are_rewritten(monkeypatch):
     assert "$name = 'COD Ping King Block US-OH 0'" in scripts[0]
     assert "$name = 'COD Ping King Block US-NJ 0'" not in scripts[0]
     assert "$keep += 'COD Ping King Block US-NJ 0'" in scripts[0]
+
+
+def test_catalog_ranges_are_split_into_few_large_rules():
+    groups = (
+        ("US-NJ", tuple(f"203.0.{i}.0/24" for i in range(1200))),
+        ("US-OH", tuple(f"198.51.{i}.0/24" for i in range(1300))),
+    )
+
+    chunks = firewall._chunk(groups)
+
+    assert len(chunks) == 3
+    assert all(len(cidrs) <= firewall.CHUNK for _, cidrs in chunks)
+    assert all(name.startswith("Set ") for name, _ in chunks)
 
 
 def test_suspend_disables_and_clear_removes(monkeypatch):
@@ -100,3 +114,16 @@ def test_a_saved_rule_set_is_enabled_without_rewriting(monkeypatch):
     assert "Enable-NetFirewallRule" in scripts[0]
     assert "New-NetFirewallRule" not in scripts[0]
     assert fw.status["rules"] == 1
+
+
+def test_failed_apply_waits_a_minute_before_retrying(monkeypatch):
+    fw = _new_firewall(monkeypatch)
+
+    def boom(script):
+        raise subprocess.TimeoutExpired("powershell.exe", 180)
+
+    monkeypatch.setattr(fw, "_run_script", boom)
+    fw._apply(("C:\\game\\cod.exe",), (("Set 1", ("203.0.113.0/24",)),), "key")
+
+    assert "TimeoutExpired" in fw.status["error"]
+    assert fw._retry_at > time.monotonic() + 50

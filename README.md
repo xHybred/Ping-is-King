@@ -46,7 +46,7 @@ leaving you searching; you can raise the delay or turn it off in Settings.
 
 ## Install
 
-1. Download `COD-Ping-King-2.1.2.exe` from the releases page.
+1. Download `COD-Ping-King-2.1.3.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick a desktop shortcut if you want one; the Start menu entry is always
    created.
@@ -217,9 +217,10 @@ Every endpoint is classified in this order:
 6. **Default** - allow or deny endpoints that are not in the catalog.
 
 The catalog is grouped into clusters. When the policy or catalog changes, the
-app rebuilds block rules for each cluster the rules reject, so the change reaches
+app rebuilds block rules for every range the rules reject, so the change reaches
 Windows Firewall without a restart. The rules are UDP only, apply only to the
-game's process, and cover every range in that cluster.
+game's process, and are batched into fixed-size sets because writing one rule
+per region took long enough to time out on a full catalog.
 
 Because the rules only cover catalogued ranges, an address that is not in the
 catalog can still receive the first packets. Once it is located and the rules
@@ -424,7 +425,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-2.1.2.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-2.1.3.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 

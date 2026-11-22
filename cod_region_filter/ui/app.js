@@ -332,7 +332,7 @@ const demo = (() => {
     manual: false,
     checked: true,
     available: demoUpdateOffer,
-    version: demoUpdateOffer ? "2.1.2" : "2.1.2",
+    version: demoUpdateOffer ? "2.1.3" : "2.1.3",
     size: demoUpdateOffer ? 28_400_000 : 0,
     sha256: "",
     url: "",
@@ -456,7 +456,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "2.1.2",
+        version: "2.1.3",
         elevated: true,
         driver: true,
         driver_error: "",
@@ -595,7 +595,7 @@ soft_mode:
           checking: false,
           checked: true,
           available: demoUpdateOffer,
-          version: demoUpdateOffer ? "2.1.2" : "2.1.2",
+          version: demoUpdateOffer ? "2.1.3" : "2.1.3",
         };
       }, 700);
       return { ok: true };
@@ -612,7 +612,7 @@ soft_mode:
             ...demoUpdateState,
             downloading: false,
             downloaded: true,
-            installer: "%LOCALAPPDATA%\\cod-ping-king\\updates\\COD-Ping-King-2.1.2.exe",
+            installer: "%LOCALAPPDATA%\\cod-ping-king\\updates\\COD-Ping-King-2.1.3.exe",
           };
         }
       }, 240);

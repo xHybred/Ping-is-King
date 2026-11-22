@@ -850,6 +850,8 @@ class AppState:
         return data
 
     def matches_payload(self, limit: int = 10) -> list[dict]:
+        if self._stop.is_set():
+            return []
         rows = self.catalog.matches(limit)
         engine = self.policy_engine
         denied = set(engine.policy.deny.cidrs) if engine.policy else set()

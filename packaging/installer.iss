@@ -2,7 +2,7 @@
 ;   iscc packaging\installer.iss
 
 #define AppName "COD Ping King"
-#define AppVersion "2.1.2"
+#define AppVersion "2.1.3"
 #define AppExe "CODPingKing.exe"
 
 ; Override with iscc /DDistDir=..\dist-next when the default build is locked by a running copy.
@@ -33,7 +33,7 @@ UninstallDisplayIcon={app}\{#AppExe}
 ; Keep the directory a previous install used, so updates land in place even
 ; when the user chose a custom folder. New installs get the path above.
 UsePreviousAppDir=yes
-VersionInfoVersion=2.1.2.0
+VersionInfoVersion=2.1.3.0
 VersionInfoDescription={#AppName} setup
 
 [InstallDelete]
