@@ -1,10 +1,11 @@
 """Windows Firewall enforcement, used instead of a packet driver.
 
-Rules are scoped to the game executable and to UDP, and one rule is kept per
-region so a policy change touches only the regions that changed. Windows
-Firewall gives block rules priority over allow rules, so service endpoints stay
-reachable by leaving their ranges out of the block list rather than by adding
-allow rules on top.
+Rules are scoped to the game executable and to UDP. Block rules are written for
+both directions: outbound rules keep the game from reaching a blocked range,
+and inbound rules cut a session that was already connected before the rule set
+was applied. Windows Firewall gives block rules priority over allow rules, so
+service endpoints stay reachable by leaving their ranges out of the block list
+rather than by adding allow rules on top.
 
 Rules are disabled when filtering stops and re-enabled when it resumes. That
 keeps a restart fast: rebuilding six thousand addresses takes tens of seconds,
@@ -30,6 +31,9 @@ STATE_NAME = "firewall-state.json"
 # Windows writes a rule slowly, and a full catalog is six thousand addresses.
 # Few large rules finish; one rule per region (about eighty) timed out at 180s.
 CHUNK = 1000
+# Bumped when rule names or their meaning change. A saved signature from an
+# older schema must not enable rules that this build would name differently.
+RULE_SCHEMA = 2
 
 # Rule groups are (name, cidrs) pairs. Region sets are flattened into chunk
 # names before they reach the rule writer.
@@ -54,8 +58,9 @@ def _ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
-def _rule_name(group: str, exe_index: int) -> str:
-    return f"{PREFIX} {group} {exe_index}"
+def _rule_name(group: str, exe_index: int, direction: str) -> str:
+    suffix = "Out" if direction.startswith("Out") else "In"
+    return f"{PREFIX} {group} {exe_index} {suffix}"
 
 
 def _chunk(groups: Groups) -> Groups:
@@ -72,7 +77,10 @@ def _chunk(groups: Groups) -> Groups:
 
 
 def _signature_key(exes: tuple[str, ...], groups: Groups) -> str:
-    body = json.dumps({"exes": exes, "groups": groups}, separators=(",", ":"))
+    body = json.dumps(
+        {"schema": RULE_SCHEMA, "exes": exes, "groups": groups},
+        separators=(",", ":"),
+    )
     return hashlib.sha256(body.encode()).hexdigest()
 
 
@@ -80,22 +88,28 @@ def _state_path() -> Path:
     return paths.local_data_dir() / STATE_NAME
 
 
-def _load_state() -> tuple[str, int]:
+def _load_state() -> tuple[str, int, list[str]]:
     try:
         data = json.loads(_state_path().read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return "", 0
+        return "", 0, []
     key = data.get("signature")
     rules = data.get("rules")
+    names = data.get("names")
     if not isinstance(key, str) or not isinstance(rules, int) or rules < 0:
-        return "", 0
-    return key, rules
+        return "", 0, []
+    if not isinstance(names, list) or not all(isinstance(n, str) for n in names):
+        names = []
+    return key, rules, names
 
 
-def _save_state(key: str, rules: int) -> None:
+def _save_state(key: str, rules: int, names: list[str] | tuple[str, ...]) -> None:
     path = _state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"signature": key, "rules": rules}), encoding="utf-8")
+    path.write_text(
+        json.dumps({"signature": key, "rules": rules, "names": list(names)}),
+        encoding="utf-8",
+    )
 
 
 class Firewall(threading.Thread):
@@ -109,8 +123,8 @@ class Firewall(threading.Thread):
         self._stop_event = threading.Event()
         self._pending: tuple[tuple[str, ...], Groups, str] | None = None
         self._signature = ""
-        self._applied: dict[str, tuple[str, tuple[str, ...]]] | None = None
-        self._saved_key, self._saved_rules = _load_state()
+        self._applied: dict[str, tuple[str, tuple[str, ...], str]] | None = None
+        self._saved_key, self._saved_rules, self._saved_names = _load_state()
         self._enabled = False
         self._rules = 0
         self._applying = False
@@ -175,16 +189,17 @@ class Firewall(threading.Thread):
                 self._pending = None
             self._stop_event.set()
             return
-        self.sync((), {})
         deadline = time.monotonic() + 8.0
         while time.monotonic() < deadline:
             with self._lock:
                 idle = self._pending is None and not self._applying
-            if idle and not self.is_alive():
-                break
             if idle:
                 break
             time.sleep(0.05)
+        with self._lock:
+            idle = self._pending is None and not self._applying
+        if idle:
+            self._suspend()
         self._stop_event.set()
         self._wake.set()
         if self.is_alive():
@@ -215,7 +230,7 @@ class Firewall(threading.Thread):
             self._last_apply = time.monotonic()
             self._apply(*pending)
 
-    def _run_script(self, script: str) -> None:
+    def _run_script(self, script: str, timeout: int = 180) -> None:
         path = os.path.join(tempfile.gettempdir(), "cod-ping-king-firewall.ps1")
         with open(path, "w", encoding="utf-8") as handle:
             handle.write(script)
@@ -232,7 +247,7 @@ class Firewall(threading.Thread):
             ],
             capture_output=True,
             text=True,
-            timeout=180,
+            timeout=timeout,
             creationflags=flags,
             startupinfo=startupinfo,
         )
@@ -242,17 +257,34 @@ class Firewall(threading.Thread):
             )
             raise RuntimeError(detail[-1] if detail else "firewall command failed")
 
+    def _prune(self, keep: set[str]) -> None:
+        lines = [
+            "$ErrorActionPreference = 'SilentlyContinue'",
+            "Get-NetFirewallRule -DisplayName 'COD Ping King Block *' | "
+            "Where-Object { @(%s) -notcontains $_.DisplayName } | "
+            "Remove-NetFirewallRule" % ",".join(_ps_quote(name) for name in keep),
+        ]
+        try:
+            self._run_script("\n".join(lines), timeout=60)
+        except Exception as exc:
+            self.log(f"firewall cleanup failed: {type(exc).__name__}: {exc}")
+
     def _desired(
         self, exes: tuple[str, ...], groups: Groups
-    ) -> dict[str, tuple[str, tuple[str, ...]]]:
-        desired: dict[str, tuple[str, tuple[str, ...]]] = {}
+    ) -> dict[str, tuple[str, tuple[str, ...], str]]:
+        desired: dict[str, tuple[str, tuple[str, ...], str]] = {}
         for exe_index, exe in enumerate(exes):
             for name, cidrs in groups:
-                desired[_rule_name(name, exe_index)] = (exe, cidrs)
+                for direction in ("Outbound", "Inbound"):
+                    desired[_rule_name(name, exe_index, direction)] = (
+                        exe,
+                        cidrs,
+                        direction,
+                    )
         return desired
 
     def _enable_only(
-        self, desired: dict[str, tuple[str, tuple[str, ...]]], key: str
+        self, desired: dict[str, tuple[str, tuple[str, ...], str]], key: str
     ) -> bool:
         """Enable an existing rule set without rewriting its addresses."""
         lines = ["$ErrorActionPreference = 'Stop'"]
@@ -269,7 +301,7 @@ class Firewall(threading.Thread):
         self._rules = len(desired)
         self._saved_key = key
         self._saved_rules = len(desired)
-        _save_state(key, len(desired))
+        _save_state(key, len(desired), tuple(desired))
         return True
 
     def _apply(self, exes: tuple[str, ...], groups: Groups, key: str) -> None:
@@ -322,7 +354,8 @@ class Firewall(threading.Thread):
             ]
             for name in desired:
                 lines.append(f"$keep += {_ps_quote(name)}")
-            for rule, (exe, cidrs) in changed.items():
+            ordered = sorted(changed.items(), key=lambda item: item[1][2] != "Outbound")
+            for rule, (exe, cidrs, direction) in ordered:
                 addresses = ",".join(_ps_quote(cidr) for cidr in cidrs)
                 lines.extend(
                     [
@@ -330,7 +363,7 @@ class Firewall(threading.Thread):
                         "$rule = Get-NetFirewallRule -DisplayName $name -ErrorAction SilentlyContinue",
                         "if ($null -eq $rule) {",
                         "  New-NetFirewallRule -DisplayName $name "
-                        "-Direction Outbound -Action Block -Protocol UDP "
+                        f"-Direction {direction} -Action Block -Protocol UDP "
                         f"-Program {_ps_quote(exe)} "
                         f"-RemoteAddress @({addresses}) "
                         "-Profile Any -Enabled True | Out-Null",
@@ -339,7 +372,8 @@ class Firewall(threading.Thread):
                         f"| Set-NetFirewallApplicationFilter -Program {_ps_quote(exe)}",
                         "  $rule | Get-NetFirewallAddressFilter "
                         f"| Set-NetFirewallAddressFilter -RemoteAddress @({addresses})",
-                        "  $rule | Set-NetFirewallRule -Enabled True -Action Block -Direction Outbound",
+                        "  $rule | Set-NetFirewallRule -Enabled True -Action Block "
+                        f"-Direction {direction}",
                         "}",
                     ]
                 )
@@ -348,14 +382,6 @@ class Firewall(threading.Thread):
             lines.append(
                 "foreach ($n in $keep) { Enable-NetFirewallRule -DisplayName $n }"
             )
-            # Only remove rules that are no longer wanted, and only after the
-            # new ones exist, so there is never a window with no block rules.
-            lines.append(
-                "Get-NetFirewallRule -DisplayName 'COD Ping King Block *' "
-                "-ErrorAction SilentlyContinue | "
-                "Where-Object { $keep -notcontains $_.DisplayName } | "
-                "Remove-NetFirewallRule"
-            )
             self._run_script("\n".join(lines))
             self._applied = dict(desired)
             self._enabled = True
@@ -363,7 +389,19 @@ class Firewall(threading.Thread):
             self._rules = len(desired)
             self._saved_key = key
             self._saved_rules = len(desired)
-            _save_state(key, len(desired))
+            _save_state(key, len(desired), tuple(desired))
+            elapsed = int((time.monotonic() - started) * 1000)
+            with self._lock:
+                self._last_ms = elapsed
+            self.log(
+                f"firewall: {len(desired)} block rules, "
+                f"{sum(len(cidrs) for _, cidrs in groups)} ranges in {elapsed}ms"
+            )
+            logged = True
+            # Pruning old names can take a while on a store left by an older
+            # build. It runs after the new rules are live so cleanup cannot
+            # postpone protection or inflate the reported apply time.
+            self._prune(set(desired))
         except Exception as exc:
             self._applied = None
             # A failed build can take minutes. Retrying every sync turns that
@@ -384,14 +422,24 @@ class Firewall(threading.Thread):
                     f"{sum(len(cidrs) for _, cidrs in groups)} ranges in {elapsed}ms"
                 )
 
-    def _suspend(self) -> None:
+    def _suspend(self, names: tuple[str, ...] | list[str] | None = None) -> None:
+        if names is None:
+            if self._applied:
+                names = tuple(self._applied)
+            else:
+                names = tuple(self._saved_names)
+        targets = [name for name in names if name]
+        if not targets:
+            with self._lock:
+                self._enabled = False
+                self._rules = 0
+            return
         started = time.monotonic()
-        script = (
-            "$ErrorActionPreference = 'SilentlyContinue'\n"
-            "Disable-NetFirewallRule -DisplayName 'COD Ping King Block *'\n"
-        )
+        lines = ["$ErrorActionPreference = 'SilentlyContinue'"]
+        for name in targets:
+            lines.append(f"Disable-NetFirewallRule -DisplayName {_ps_quote(name)}")
         try:
-            self._run_script(script)
+            self._run_script("\n".join(lines), timeout=60)
         except Exception as exc:
             with self._lock:
                 self._error = f"{type(exc).__name__}: {exc}"
@@ -401,7 +449,7 @@ class Firewall(threading.Thread):
             self._enabled = False
             self._rules = 0
             self._last_ms = int((time.monotonic() - started) * 1000)
-        self.log("firewall: rules suspended")
+        self.log(f"firewall: {len(targets)} rules suspended")
 
     def _remove_rules(self) -> None:
         script = (
@@ -422,5 +470,6 @@ class Firewall(threading.Thread):
             self._rules = 0
             self._saved_key = ""
             self._saved_rules = 0
-        _save_state("", 0)
+            self._saved_names = []
+        _save_state("", 0, ())
         self.log("firewall: rules removed")

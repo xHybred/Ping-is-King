@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>COD Ping King</title>
-<link rel="stylesheet" href="styles.css?v=2.1.3">
+<link rel="stylesheet" href="styles.css?v=2.1.4">
 </head>
 <body>
 <div id="app">
@@ -59,7 +59,7 @@
         </div>
       </div>
       <div class="rail-meta">
-        <span id="rail-version">v2.1.3</span>
+        <span id="rail-version">v2.1.4</span>
         <button class="link" id="rail-pause">Pause</button>
       </div>
     </div>
@@ -121,14 +121,6 @@
         <button class="btn btn-small" id="loop-pause">Pause filtering</button>
         <button class="btn btn-small" id="loop-dismiss">Dismiss</button>
       </div>
-    </div>
-
-    <div class="banner banner-info" id="soft-banner" hidden>
-      <div>
-        <strong>Search guard is active.</strong>
-        <span id="soft-banner-text">No match was found, so unknown endpoints were allowed temporarily.</span>
-      </div>
-      <button class="btn btn-small" id="soft-stop-btn">Turn off search guard</button>
     </div>
 
     <div class="banner banner-warn" id="policy-banner" hidden>
@@ -503,20 +495,6 @@
           <div class="card-head"><div><h2>Filtering</h2><p>How ambiguous endpoints are handled.</p></div></div>
           <p class="hint">Changes here apply immediately. Pause filtering on the Dashboard stops all of it.</p>
           <div class="setting-row">
-            <div><strong>Search guard</strong><span>Admit unclassified servers if no match is found in time. Located servers outside your list are never admitted.</span></div>
-            <select id="set-soft">
-              <option value="off">Off</option>
-              <option value="unknown">Allow unclassified servers only</option>
-            </select>
-          </div>
-          <div class="setting-row">
-            <div><strong>Relax after</strong><span>Seconds of searching before the guard lifts.</span></div>
-            <div class="inline-field">
-              <input type="number" id="set-soft-seconds" min="10" max="300" step="5">
-              <span>s</span>
-            </div>
-          </div>
-          <div class="setting-row">
             <div><strong>Unclassified endpoints</strong><span>Servers the catalogue has not located yet.</span></div>
             <select id="set-unknown">
               <option value="allow">Allow</option>
@@ -542,7 +520,7 @@
                 <input type="file" id="import-policy-file" accept=".yaml,.yml" hidden>
               </div>
               <h3>Windows Firewall</h3>
-              <p class="hint">Rules are removed when filtering stops and when the app exits. Pause filtering to remove any that a crash left behind.</p>
+              <p class="hint">Rules are disabled when filtering stops and when the app exits. Pause filtering to remove any that a crash left behind.</p>
               <div class="button-row">
                 <button class="btn btn-small btn-danger-ghost" id="remove-firewall">Remove firewall rules</button>
               </div>
@@ -583,8 +561,8 @@
 </div>
 
 <div class="toast-stack" id="toasts" aria-live="polite"></div>
-<script src="world.js?v=2.1.3"></script>
-<script src="app.js?v=2.1.3"></script>
+<script src="world.js?v=2.1.4"></script>
+<script src="app.js?v=2.1.4"></script>
 </body>
 </html>
 

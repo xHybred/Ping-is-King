@@ -63,6 +63,31 @@ def test_remove_firewall_rules_requires_paused_filtering(state, monkeypatch):
     assert cleared == [True]
 
 
+def test_firewall_waits_for_a_known_game_path(state, monkeypatch):
+    calls = []
+    from cod_region_filter import state as state_mod
+
+    state.elevated = True
+    monkeypatch.setattr(state_mod.firewall_mod, "available", lambda: True)
+    monkeypatch.setattr(
+        state.firewall, "sync", lambda exes, groups: calls.append((exes, groups))
+    )
+    monkeypatch.setattr(state.capture, "exe_paths", lambda: ())
+    state.config["game_exes"] = []
+
+    state._sync_firewall()
+    assert calls == []
+
+    state.config["game_exes"] = ["C:\\game\\cod.exe"]
+    state._sync_firewall()
+    assert calls[-1][0] == ("C:\\game\\cod.exe",)
+
+    monkeypatch.setattr(state.capture, "exe_paths", lambda: ("D:\\new\\cod.exe",))
+    state._sync_firewall()
+    assert calls[-1][0] == ("D:\\new\\cod.exe",)
+    assert state.config["game_exes"] == ["D:\\new\\cod.exe"]
+
+
 def test_manual_deny_ranges_are_sent_to_the_firewall(state):
     state.catalog.observe("45.63.1.10", 400)
     state.catalog.flush()

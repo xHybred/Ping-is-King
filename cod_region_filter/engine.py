@@ -269,6 +269,7 @@ class Engine:
                         "port": port,
                         "reason": verdict["reason"],
                         "at": _iso(time.time()),
+                        "denied": True,
                     }
                 )
             return verdict
@@ -406,7 +407,14 @@ class Engine:
         for flow in self._flows.values():
             if now - flow.last_seen > 3.0:
                 continue
-            if is_platform_port(flow.port):
+            rec = self._record(flow.ip)
+            if rec is not None and rec.is_service:
+                continue
+            # A game server can sit on a platform port, and skipping the port
+            # outright is why some matches never showed a current server.
+            if is_platform_port(flow.port) and not (
+                rec is not None and rec.known_server
+            ):
                 continue
             if flow.first_seen and now - flow.first_seen < MATCH_MIN_SECONDS:
                 continue
@@ -452,6 +460,7 @@ class Engine:
                 "port": flow.port,
                 "reason": f"Match ended after {match['duration_s']}s",
                 "at": match["ended_at"],
+                "denied": False,
             }
         )
         self._match_count += 1

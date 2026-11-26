@@ -42,6 +42,7 @@ DEFAULT_CONFIG = {
     "streamer_mode": False,
     "theme": "midnight",
     "check_updates": True,
+    "game_exes": [],
 }
 
 
@@ -359,9 +360,10 @@ class AppState:
     def _sync_firewall(self) -> None:
         """Hand the firewall worker the regions that should be blocked.
 
-        One rule per region means a policy change only touches the regions that
-        changed, and a match on an allowed server touches nothing at all. The
-        search guard works by removing every rule while it is relaxed.
+        The last game executable is remembered so the stored rule set can be
+        enabled at launch, before the game is running. An unknown executable
+        means leave the rules alone rather than suspending them, which is what
+        used to spend the whole 180 second timeout before a match.
         """
         if not (self.elevated and firewall_mod.available()):
             return
@@ -369,11 +371,14 @@ class AppState:
             self.firewall.sync((), {})
             return
         exes = self.capture.exe_paths()
+        if exes:
+            saved = tuple(self.config.get("game_exes") or ())
+            if tuple(exes) != saved:
+                self.config["game_exes"] = list(exes)
+                _write_json(paths.config_path(), self.config)
+        else:
+            exes = tuple(self.config.get("game_exes") or ())
         if not exes:
-            self.firewall.sync((), {})
-            return
-        if self.engine.soft_active:
-            self.firewall.sync(exes, {})
             return
         self.firewall.sync(exes, self._firewall_groups())
 

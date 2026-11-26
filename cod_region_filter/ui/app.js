@@ -332,7 +332,7 @@ const demo = (() => {
     manual: false,
     checked: true,
     available: demoUpdateOffer,
-    version: demoUpdateOffer ? "2.1.3" : "2.1.3",
+    version: demoUpdateOffer ? "2.1.5" : "2.1.4",
     size: demoUpdateOffer ? 28_400_000 : 0,
     sha256: "",
     url: "",
@@ -456,7 +456,7 @@ soft_mode:
   const demoApi = {
     bootstrap() {
       return {
-        version: "2.1.3",
+        version: "2.1.4",
         elevated: true,
         driver: true,
         driver_error: "",
@@ -595,7 +595,7 @@ soft_mode:
           checking: false,
           checked: true,
           available: demoUpdateOffer,
-          version: demoUpdateOffer ? "2.1.3" : "2.1.3",
+          version: demoUpdateOffer ? "2.1.5" : "2.1.4",
         };
       }, 700);
       return { ok: true };
@@ -612,7 +612,7 @@ soft_mode:
             ...demoUpdateState,
             downloading: false,
             downloaded: true,
-            installer: "%LOCALAPPDATA%\\cod-ping-king\\updates\\COD-Ping-King-2.1.3.exe",
+            installer: "%LOCALAPPDATA%\\cod-ping-king\\updates\\COD-Ping-King-2.1.4.exe",
           };
         }
       }, 240);
@@ -727,9 +727,6 @@ function renderChrome(boot) {
   $("#policy-banner-text").textContent = boot.policy_error || "";
   $("#rules-badge").hidden = !boot.policy_error;
 
-  $("#soft-banner").hidden = !s.soft_active;
-  if (s.soft_active) $("#soft-banner-text").textContent = s.soft_reason;
-
   const cancelled = s.last_cancelled;
   const fresh = cancelled && Date.now() / 1000 - Number(cancelled.at || 0) < 600;
   const showCancel = Boolean(cancelled) && fresh && !state.cancelDismissed;
@@ -792,19 +789,31 @@ function renderDashboard(boot) {
 
   $("#stat-filtering").textContent = s.filtering ? "On" : "Off";
   $("#stat-filtering-sub").textContent = boot.elevated
-    ? (s.soft_active ? "Search guard lifted" : "Blocking out-of-policy servers")
+    ? "Blocking out-of-policy servers"
     : "Administrator access required";
 
-  $("#stat-server").textContent = current ? (current.city || "Unclassified") : "Searching";
+  const game = boot.game;
+  const latestDenied = (s.recent || []).find((r) => r.denied === true);
+  const deniedFresh =
+    latestDenied && Date.now() - Date.parse(latestDenied.at || "") < 300_000;
+  $("#stat-server").textContent = current
+    ? (current.city || "Unclassified")
+    : game
+      ? "Not in a match"
+      : "Game not running";
   $("#stat-server-sub").textContent = current
     ? `${current.region || current.country || "Unknown location"}${current.provider ? ` - ${current.provider}` : ""}${current.allowed ? "" : " (outside policy)"}`
-    : (s.searching_s ? `Searching for ${fmtDuration(s.searching_s)}` : "No match in progress");
+    : deniedFresh
+      ? `Blocked ${latestDenied.ip} (${latestDenied.reason})`
+      : game
+        ? "Waiting for the next match"
+        : "Start Call of Duty to begin";
 
   const shownRtt = current ? current.rtt_ms : null;
   $("#stat-rtt").textContent = fmtPing(shownRtt);
   $("#stat-rtt-sub").textContent = "Approximate, from reply timing";
   $("#stat-denied").textContent = s.allowed_packets.toLocaleString();
-  $("#stat-denied-sub").textContent = `${s.denied_packets.toLocaleString()} outside policy${s.soft_active ? ", guard active" : ""}`;
+  $("#stat-denied-sub").textContent = `${s.denied_packets.toLocaleString()} outside policy`;
 
   $("#session-tag").textContent = current ? (current.allowed ? "Connected" : "Outside policy") : "Idle";
   $("#session-tag").className = `tag ${current ? (current.allowed ? "ok" : "bad") : ""}`;
@@ -836,11 +845,11 @@ function renderDashboard(boot) {
   $("#session-ip").textContent = current ? `${current.remote_ip}:${current.port}` : "--";
   $("#session-reason").textContent =
     current && current.reason && current.reason !== ruleText ? current.reason : "";
-  $("#session-note").textContent = s.soft_active
-    ? "Search guard is allowing unclassified endpoints until a match is found."
-    : current
-      ? "Traffic is matched live against your rules."
-      : "Waiting for the game to join a match.";
+  $("#session-note").textContent = current
+    ? "Traffic is matched live against your rules."
+    : game
+      ? "Waiting for the game to join a match."
+      : "The game is not running.";
 
   state.currentRegionKey = current ? current.region_key : null;
   $("#allow-region-btn").disabled = !current || !current.region_key || current.allowed;
@@ -1293,9 +1302,6 @@ function renderSettings() {
   $("#set-autofilter").checked = Boolean(cfg.filtering);
   $("#set-tray").checked = cfg.minimize_to_tray !== false;
   $("#set-streamer").checked = Boolean(cfg.streamer_mode);
-  $("#set-soft").value = summary.soft && summary.soft.enabled ? "unknown" : "off";
-  $("#set-soft-seconds").value = (summary.soft && summary.soft.relax_after_s) || 45;
-  $("#set-soft-seconds").disabled = !(summary.soft && summary.soft.enabled);
   $("#set-unknown").value = summary.unknown || "allow";
   $("#set-geo").checked = Boolean(cfg.auto_geolocate);
   $("#show-seed").checked = Boolean(state.showSeed);
@@ -1335,7 +1341,6 @@ function renderSettings() {
     ["Policy", `${summary.mode || "?"}, unknown ${summary.unknown || "?"}`],
     ["Allowed regions", (summary.allow && summary.allow.regions ? summary.allow.regions.length : 0)],
     ["Provider rules", `${(summary.allow && summary.allow.providers ? summary.allow.providers.length : 0)} allow, ${(summary.deny && summary.deny.providers ? summary.deny.providers.length : 0)} deny`],
-    ["Search guard", summary.soft && summary.soft.enabled ? `${summary.soft.relax_after_s}s` : "Off"],
     ["In policy / outside policy", `${st.allowed_packets || 0} / ${st.denied_packets || 0}`],
     ["Matches recorded", st.match_count || 0],
     ["Matches cancelled", st.cancelled_total || 0],
@@ -1670,12 +1675,6 @@ function bindEvents() {
     if (!result.ok) toast(result.error || "Could not request elevation", "bad");
   });
 
-  $("#soft-stop-btn").addEventListener("click", async () => {
-    await call("set_soft_mode", false, 45);
-    toast("Search guard disabled");
-    await refresh();
-  });
-
   $("#cancel-dismiss").addEventListener("click", () => {
     state.cancelDismissed = true;
     $("#cancel-banner").hidden = true;
@@ -1977,12 +1976,10 @@ function bindEvents() {
     state.mapView = null;
     await mutate(call("set_setting", "streamer_mode", on), on ? "Streamer mode on. Details are hidden." : "Streamer mode off. Details are visible.");
   });
-  $("#set-soft").addEventListener("change", (e) => mutate(call("set_soft_mode", e.target.value !== "off", Number($("#set-soft-seconds").value) || 45), "Search guard saved"));
   $("#set-theme").addEventListener("change", async (e) => {
     applyTheme(e.target.value);
     await mutate(call("set_theme", e.target.value), "");
   });
-  $("#set-soft-seconds").addEventListener("change", (e) => mutate(call("set_soft_mode", $("#set-soft").value !== "off", Number(e.target.value) || 45), "Search guard delay saved"));
   $("#set-unknown").addEventListener("change", (e) => mutate(call("set_unknown", e.target.value), "Unknown endpoint rule saved"));
   $("#providers-table").addEventListener("change", (e) => {
     const select = e.target.closest(".provider-rule");
@@ -1996,12 +1993,11 @@ function bindEvents() {
   $("#reset-filtering").addEventListener("click", async () => {
     const ok = await confirmDialog(
       "Reset filtering options?",
-      "Search guard returns to 45 seconds and unclassified endpoints to the default for your mode. Regions and provider rules are not touched.",
+      "Unclassified endpoints return to the default for your mode. Regions and provider rules are not touched.",
       "Reset"
     );
     if (!ok) return;
     const unknown = boot.summary && boot.summary.mode === "allowlist" ? "deny" : "allow";
-    await call("set_soft_mode", true, 45);
     await call("set_unknown", unknown);
     await refresh();
     toast("Filtering options reset", "ok");

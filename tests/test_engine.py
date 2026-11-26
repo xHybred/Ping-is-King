@@ -31,6 +31,36 @@ def setup(tmp_path, policy=None):
     return cat, eng
 
 
+def test_known_server_on_a_platform_port_can_be_the_match(tmp_path):
+    cat, eng = setup(tmp_path)
+    cat.record_match(
+        {
+            "remote_ip": "203.0.113.10",
+            "cidr": "203.0.113.0/24",
+            "city": "Columbus",
+            "region": "Ohio",
+            "country": "United States",
+            "started_at": "2026-11-25T00:00:00+00:00",
+            "ended_at": "2026-11-25T00:01:00+00:00",
+            "duration_s": 60,
+            "bytes": 1000,
+            "rtt_ms": 20.0,
+            "allowed": True,
+            "reason": "Allowed by region",
+        }
+    )
+    t = 1000.0
+    for _ in range(50):
+        eng.observe("203.0.113.10", 3074, "outbound", 200, now=t)
+        t += 0.1
+    eng.tick(t + 1.0)
+    current = eng.current_match()
+    assert current is not None
+    assert current["remote_ip"] == "203.0.113.10"
+    assert current["port"] == 3074
+    cat.close()
+
+
 def test_located_outside_allowlist_is_denied(tmp_path):
     cat, eng = setup(tmp_path, Policy(allow=AllowSpec(regions=["US-OH"])))
     verdict = eng.observe("198.51.100.10", 30000, "outbound", 200, now=1000.0)

@@ -7,8 +7,8 @@ from cod_region_filter import firewall
 
 
 def _new_firewall(monkeypatch):
-    monkeypatch.setattr(firewall, "_load_state", lambda: ("", 0))
-    monkeypatch.setattr(firewall, "_save_state", lambda key, rules: None)
+    monkeypatch.setattr(firewall, "_load_state", lambda: ("", 0, []))
+    monkeypatch.setattr(firewall, "_save_state", lambda key, rules, names: None)
     return firewall.Firewall()
 
 
@@ -29,7 +29,29 @@ def test_rule_writer_never_shows_a_console(monkeypatch):
     kwargs = calls[0][1]
     assert kwargs["creationflags"] & 0x08000000
     assert kwargs["startupinfo"].wShowWindow == subprocess.SW_HIDE
-    assert firewall._rule_name("US-NJ", 0) == "COD Ping King Block US-NJ 0"
+    assert (
+        firewall._rule_name("US-NJ", 0, "Outbound") == "COD Ping King Block US-NJ 0 Out"
+    )
+    assert (
+        firewall._rule_name("US-NJ", 0, "Inbound") == "COD Ping King Block US-NJ 0 In"
+    )
+
+
+def test_rules_block_both_directions(monkeypatch):
+    scripts = []
+    fw = _new_firewall(monkeypatch)
+    monkeypatch.setattr(
+        fw, "_run_script", lambda script, timeout=180: scripts.append(script)
+    )
+    exes = ("C:\\game\\cod.exe",)
+    groups = (("Set 1", ("203.0.113.0/24",)),)
+    fw._apply(exes, groups, firewall._signature_key(exes, groups))
+
+    script = scripts[0]
+    assert "-Direction Outbound" in script
+    assert "-Direction Inbound" in script
+    assert "COD Ping King Block Set 1 0 Out" in script
+    assert "COD Ping King Block Set 1 0 In" in script
 
 
 def test_rapid_changes_collapse_into_one_apply(monkeypatch):
@@ -58,7 +80,9 @@ def test_rapid_changes_collapse_into_one_apply(monkeypatch):
 def test_only_changed_regions_are_rewritten(monkeypatch):
     scripts = []
     fw = _new_firewall(monkeypatch)
-    monkeypatch.setattr(fw, "_run_script", lambda script: scripts.append(script))
+    monkeypatch.setattr(
+        fw, "_run_script", lambda script, timeout=180: scripts.append(script)
+    )
     exes = ("C:\\game\\cod.exe",)
     first = (("US-NJ", ("203.0.113.0/24",)), ("US-OH", ("198.51.100.0/24",)))
     fw._apply(exes, first, firewall._signature_key(exes, first))
@@ -67,10 +91,11 @@ def test_only_changed_regions_are_rewritten(monkeypatch):
     second = (("US-NJ", ("203.0.113.0/24",)), ("US-OH", ("192.0.2.0/24",)))
     fw._apply(exes, second, firewall._signature_key(exes, second))
 
-    assert len(scripts) == 1
-    assert "$name = 'COD Ping King Block US-OH 0'" in scripts[0]
-    assert "$name = 'COD Ping King Block US-NJ 0'" not in scripts[0]
-    assert "$keep += 'COD Ping King Block US-NJ 0'" in scripts[0]
+    assert scripts
+    applied = scripts[0]
+    assert "$name = 'COD Ping King Block US-OH 0 Out'" in applied
+    assert "$name = 'COD Ping King Block US-NJ 0 Out'" not in applied
+    assert "$keep += 'COD Ping King Block US-NJ 0 Out'" in applied
 
 
 def test_catalog_ranges_are_split_into_few_large_rules():
@@ -89,10 +114,14 @@ def test_catalog_ranges_are_split_into_few_large_rules():
 def test_suspend_disables_and_clear_removes(monkeypatch):
     scripts = []
     fw = _new_firewall(monkeypatch)
-    monkeypatch.setattr(fw, "_run_script", lambda script: scripts.append(script))
+    fw._saved_names = ["COD Ping King Block Set 1 0 Out"]
+    monkeypatch.setattr(
+        fw, "_run_script", lambda script, timeout=180: scripts.append(script)
+    )
 
     fw._apply((), (), "")
     assert "Disable-NetFirewallRule" in scripts[-1]
+    assert "Set 1 0 Out" in scripts[-1]
 
     fw._remove_rules()
     assert "Remove-NetFirewallRule" in scripts[-1]
@@ -102,24 +131,30 @@ def test_a_saved_rule_set_is_enabled_without_rewriting(monkeypatch):
     exes = ("C:\\game\\cod.exe",)
     groups = (("US-NJ", ("203.0.113.0/24",)),)
     key = firewall._signature_key(exes, groups)
-    monkeypatch.setattr(firewall, "_load_state", lambda: (key, 1))
-    monkeypatch.setattr(firewall, "_save_state", lambda key, rules: None)
+    names = (
+        "COD Ping King Block US-NJ 0 Out",
+        "COD Ping King Block US-NJ 0 In",
+    )
+    monkeypatch.setattr(firewall, "_load_state", lambda: (key, 2, list(names)))
+    monkeypatch.setattr(firewall, "_save_state", lambda key, rules, names: None)
     scripts = []
     fw = firewall.Firewall()
-    monkeypatch.setattr(fw, "_run_script", lambda script: scripts.append(script))
+    monkeypatch.setattr(
+        fw, "_run_script", lambda script, timeout=180: scripts.append(script)
+    )
 
     fw._apply(exes, groups, key)
 
     assert len(scripts) == 1
     assert "Enable-NetFirewallRule" in scripts[0]
     assert "New-NetFirewallRule" not in scripts[0]
-    assert fw.status["rules"] == 1
+    assert fw.status["rules"] == 2
 
 
 def test_failed_apply_waits_a_minute_before_retrying(monkeypatch):
     fw = _new_firewall(monkeypatch)
 
-    def boom(script):
+    def boom(script, timeout=180):
         raise subprocess.TimeoutExpired("powershell.exe", 180)
 
     monkeypatch.setattr(fw, "_run_script", boom)

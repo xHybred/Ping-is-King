@@ -29,9 +29,9 @@ Windows Firewall rules. There is no kernel driver and no packet interception.
 - Streamer mode hides your location and server addresses for screenshots and
   recordings. Closing the window keeps filtering in the tray.
 
-It does not change how the game rates you, only which servers are reachable. If
-your bracket has nobody nearby, the search guard relaxes the filter instead of
-leaving you searching; you can raise the delay or turn it off in Settings.
+It does not change how the game rates you, only which servers are reachable.
+Ranges the catalog has not located yet cannot be blocked; widen the radius or add
+a region if the list is too tight.
 
 ## Requirements
 
@@ -46,7 +46,7 @@ leaving you searching; you can raise the delay or turn it off in Settings.
 
 ## Install
 
-1. Download `COD-Ping-King-2.1.3.exe` from the releases page.
+1. Download `COD-Ping-King-2.1.4.exe` from the releases page.
 2. Run it and allow the administrator prompt.
 3. Pick a desktop shortcut if you want one; the Start menu entry is always
    created.
@@ -100,7 +100,7 @@ The wizard lists the regions it recommends, with ping where it has a
 measurement. Click **Use recommended** to allow them all; you can fine-tune the
 list later on Regions. That switches the policy to allowlist mode and blocks
 catalogued servers outside those regions. Ranges the catalog has not located
-yet cannot be blocked, so the search guard is the way out if the list is too
+yet cannot be blocked, so widen the radius or add a region if the list is too
 tight.
 
 <a href="docs/screenshots/setup-3.png"><img src="docs/screenshots/setup-3.png" alt="Setup step 3: recommended regions" width="100%"></a>
@@ -170,9 +170,8 @@ is on by default; turn it off if the close button should exit.
 cannot show a UAC prompt at sign-in, so the task is the only way to start
 hidden. **Filter when the app starts** restores the last pause state.
 
-**Filtering** has the search guard, its delay and the rule for unclassified
-endpoints. **Reset filtering options** restores the search guard, its delay and
-the unclassified-endpoint rule.
+**Filtering** has the rule for unclassified endpoints. **Reset filtering
+options** restores it. Regions and provider rules are not touched.
 
 **Rules and data** combines policy export and import with catalog refresh, CSV
 and discovered-server export, the data folder, the firewall rule cleanup and
@@ -202,8 +201,8 @@ toggles filtering without leaving the game.
 
 The app does not intercept packets. It observes UDP sends and receives from the
 game with ETW, the same event source Windows uses for its own network counters,
-and enforces the policy with outbound Windows Firewall rules scoped to the game
-executable.
+and enforces the policy with outbound and inbound Windows Firewall rules scoped
+to the game executable.
 
 Every endpoint is classified in this order:
 
@@ -222,23 +221,27 @@ Windows Firewall without a restart. The rules are UDP only, apply only to the
 game's process, and are batched into fixed-size sets because writing one rule
 per region took long enough to time out on a full catalog.
 
+Rules exist in both directions. Outbound rules keep the game from reaching a
+blocked range, and inbound rules cut a session that was already connected before
+the rule set was written.
+
 Because the rules only cover catalogued ranges, an address that is not in the
 catalog can still receive the first packets. Once it is located and the rules
 sync, later traffic is dropped and the game sees a timeout. Ranges with no
 location never enter a rule, so they pass; that is the price of not
 intercepting.
 
-The search guard clears the block rules while it is relaxed, so the game can
-find someone to play when nothing nearby is available. The rules return once a
-match starts. Catalogued service ranges are left out of block lists, because
-Windows Firewall checks block rules before allow rules and an allow rule cannot
-override a block.
+Catalogued service ranges are left out of block lists, because Windows Firewall
+checks block rules before allow rules and an allow rule cannot override a block.
 
 Rules are named `COD Ping King Block ...`, visible in Windows Firewall, and
 disabled when filtering stops or the app exits. They are not deleted on a normal
 exit, so the next launch re-enables the same set instead of rebuilding thousands
-of addresses. The installer and uninstaller delete rules from an older build, and
-the **Remove firewall rules** button deletes the current ones outright.
+of addresses. The last game executable is remembered so that happens before the
+game starts. New rules are written before old ones are pruned, which keeps a slow
+cleanup from leaving the machine unprotected. The installer and uninstaller
+delete rules from an older build, and the **Remove firewall rules** button
+deletes the current ones outright.
 
 Without packet interception there are no driver counters. Packet counts and the
 ping estimate come from ETW events, and a verdict only decides whether a range
@@ -309,11 +312,10 @@ runs elevated.
 works: it falls back to the nearest regions, or the densest ones when no home is
 set. Run **Settings -> Update from public lists** for better data.
 
-**Stuck searching.** Check that at least one region is still allowed. The search
-guard removes the block rules after 45 seconds, but it cannot help if every
-catalogued server near you is denied. Widen the radius or add a region. If the
-game keeps finding the same blocked city, the dashboard banner offers to allow
-it or pause filtering.
+**Stuck searching.** Check that at least one region is still allowed. Ranges the
+catalog has not located cannot be blocked, so widening the radius or adding a
+region is the fix when nothing nearby is allowed. If the game keeps finding the
+same blocked city, the dashboard banner offers to allow it or pause filtering.
 
 **Stuck on "Waiting for relay".** Relay and lobby hosts run on the same hosting
 providers as match servers, so a provider block can cut the relay and leave the
@@ -425,7 +427,7 @@ Build the installer with [Inno Setup 6](https://jrsoftware.org/isinfo.php):
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" packaging\installer.iss
 ```
 
-Output: `dist\installer\COD-Ping-King-2.1.3.exe`. Close a running copy before
+Output: `dist\installer\COD-Ping-King-2.1.4.exe`. Close a running copy before
 rebuilding into `dist`, or Windows locks the bundled DLLs. If that happens, build
 to `dist-next` and pass `/DDistDir=..\dist-next` to ISCC.
 
@@ -467,7 +469,7 @@ cod_region_filter/
   legacy.py    WinDivert service cleanup
   catalog.py   SQLite range catalog and clustering
   catalog_update.py  public list download and parsing
-  engine.py    flow tracking, match detection, search guard
+  engine.py    flow tracking and match detection
   firewall.py  Windows Firewall block rule management
   games.py     process and UDP port discovery
   geo.py       HTTPS geolocation
